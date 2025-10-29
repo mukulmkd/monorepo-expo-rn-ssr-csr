@@ -1,0 +1,13 @@
+{
+  "name": "@pkg/core",
+  "version": "0.1.0",
+  "private": false,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "source": "src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo 'no lint configured'"
+  }
+}

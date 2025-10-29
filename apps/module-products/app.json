@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Module Products",
+    "slug": "module-products",
+    "scheme": "module-products",
+    "version": "1.0.0",
+    "platforms": ["ios", "android", "web"],
+    "web": { "bundler": "metro" }
+  }
+}

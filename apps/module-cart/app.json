@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Module Cart",
+    "slug": "module-cart",
+    "scheme": "module-cart",
+    "version": "1.0.0",
+    "platforms": ["ios", "android", "web"],
+    "web": { "bundler": "metro" }
+  }
+}

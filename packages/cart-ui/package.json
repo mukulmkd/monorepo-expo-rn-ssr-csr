@@ -1,0 +1,17 @@
+{
+  "name": "@pkg/cart-ui",
+  "version": "0.1.0",
+  "private": false,
+  "main": "src/index.tsx",
+  "types": "src/index.tsx",
+  "source": "src/index.tsx",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo 'no lint configured'"
+  },
+  "dependencies": {
+    "@pkg/state": "*",
+    "@pkg/ui": "*"
+  }
+}
