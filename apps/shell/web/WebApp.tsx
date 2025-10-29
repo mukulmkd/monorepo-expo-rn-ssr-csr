@@ -6,7 +6,7 @@ import React, {
   useRef,
 } from "react";
 import { Provider } from "react-redux";
-import { View, Text } from "react-native";
+import { View, Text, Platform } from "react-native";
 import { Header, Footer, Navigation, NavigationContext } from "@pkg/ui";
 import { ProductsScreen } from "@pkg/products-ui";
 import { CartScreen } from "@pkg/cart-ui";
@@ -177,7 +177,13 @@ export default function WebApp({
   return (
     <Provider store={appStore}>
       <NavigationContext.Provider value={navigationContextValue}>
-        <View style={{ flex: 1, backgroundColor: "#fff" }}>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "#fff",
+            ...(Platform.OS === "web" ? ({ minHeight: "100vh" } as any) : {}),
+          }}
+        >
           <Header />
           <Navigation onNavigate={handleNavigate} />
           <View style={{ flex: 1 }} key={route}>

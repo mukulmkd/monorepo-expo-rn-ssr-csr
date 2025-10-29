@@ -17,8 +17,8 @@ export async function render(url: string) {
   const store = configureStore();
   store.dispatch(upsertProducts(products));
 
-  // Render with populated store
-  const app = renderToString(<App />);
+  // Render with populated store and productId
+  const app = renderToString(<App store={store} productId={productId} />);
 
   // Serialize Redux state for hydration
   const preloadedState = store.getState();
@@ -29,6 +29,18 @@ export async function render(url: string) {
       <meta charset=\"utf-8\" />
       <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
       <title>Product Detail</title>
+      <style>
+        html, body {
+          margin: 0;
+          padding: 0;
+          height: 100%;
+        }
+        #root {
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+        }
+      </style>
     </head>
     <body>
       <div id=\"root\">${app}</div>

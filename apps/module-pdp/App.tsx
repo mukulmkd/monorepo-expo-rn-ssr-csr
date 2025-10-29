@@ -4,40 +4,35 @@ import { View } from "react-native";
 import { Header, Footer, Navigation } from "@pkg/ui";
 import { ProductDetailPage } from "@pkg/pdp-ui";
 import { configureStore, AppStore } from "@pkg/state";
-import { AppState } from "@pkg/state";
 
-// For standalone PDP module, get productId from URL params or use a default
-// In a real app, this would come from navigation params or URL
-export default function App() {
-  // Extract productId from URL query params for web, or use a default
-  const [productId, setProductId] = React.useState<string>("1");
-  const [store] = React.useState<AppStore>(() => {
-    // Initialize store from preloaded state if available
-    if (typeof window !== "undefined") {
-      const preloadedState = (window as any).__PRELOADED_STATE__ as
-        | AppState
-        | undefined;
-      if (preloadedState) {
-        const s = configureStore(preloadedState);
-        delete (window as any).__PRELOADED_STATE__;
-        return s;
-      }
-    }
-    return configureStore();
-  });
+type AppProps = {
+  store?: AppStore;
+  productId?: string;
+};
+
+export default function App({ store, productId: initialProductId }: AppProps) {
+  const appStore = store || configureStore();
+
+  // Extract productId from URL query params for web, or use prop/default
+  const [productId, setProductId] = React.useState<string>(
+    initialProductId || "1"
+  );
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       // Get productId from URL or window global
       const params = new URLSearchParams(window.location.search);
       const id =
-        params.get("productId") || (window as any).__PRODUCT_ID__ || "1";
+        params.get("productId") ||
+        (window as any).__PRODUCT_ID__ ||
+        initialProductId ||
+        "1";
       setProductId(id);
     }
-  }, []);
+  }, [initialProductId]);
 
   return (
-    <Provider store={store}>
+    <Provider store={appStore}>
       <View style={{ flex: 1 }}>
         <Header />
         <Navigation />

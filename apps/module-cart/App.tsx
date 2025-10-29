@@ -3,13 +3,17 @@ import { Provider } from "react-redux";
 import { View } from "react-native";
 import { Header, Footer, Navigation } from "@pkg/ui";
 import { CartScreen } from "@pkg/cart-ui";
-import { configureStore } from "@pkg/state";
+import { configureStore, AppStore } from "@pkg/state";
 
-const store = configureStore();
+type AppProps = {
+  store?: AppStore;
+};
 
-export default function App() {
+export default function App({ store }: AppProps) {
+  const appStore = store || configureStore();
+
   return (
-    <Provider store={store}>
+    <Provider store={appStore}>
       <View style={{ flex: 1 }}>
         <Header />
         <Navigation />

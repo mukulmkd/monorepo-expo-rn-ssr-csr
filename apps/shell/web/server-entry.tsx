@@ -49,6 +49,18 @@ export async function render(url: string) {
       <meta charset=\"utf-8\" />
       <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
       <title>Shell</title>
+      <style>
+        html, body {
+          margin: 0;
+          padding: 0;
+          height: 100%;
+        }
+        #root {
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+        }
+      </style>
     </head>
     <body>
       <div id=\"root\">${app}</div>
