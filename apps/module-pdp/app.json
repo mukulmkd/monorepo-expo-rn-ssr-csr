@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Module PDP",
+    "slug": "module-pdp",
+    "scheme": "module-pdp",
+    "version": "1.0.0",
+    "platforms": ["ios", "android", "web"],
+    "web": { "bundler": "metro" }
+  }
+}

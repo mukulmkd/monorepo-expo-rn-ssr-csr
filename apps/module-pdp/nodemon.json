@@ -1,0 +1,9 @@
+{
+  "watch": ["server", "web", "../../packages", "../../node_modules/@pkg"],
+  "ext": "js,ts,tsx,json",
+  "ignore": ["node_modules", "dist", "*.test.js", "*.test.ts", "*.test.tsx"],
+  "exec": "node server/index.js",
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

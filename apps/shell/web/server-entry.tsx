@@ -5,7 +5,29 @@ import { configureStore } from "@pkg/state";
 import { upsertProducts } from "@pkg/state";
 import { getProducts } from "@pkg/core";
 
+function parseUrl(url: string): { route: string; productId: string | null } {
+  const urlObj = new URL(url, "http://localhost");
+  const path = urlObj.pathname;
+  const productId = urlObj.searchParams.get("productId");
+
+  if (path === "/cart") {
+    return { route: "cart", productId: null };
+  } else if (path === "/plp") {
+    return { route: "products", productId: null };
+  } else if (path === "/pdp" && productId) {
+    return { route: "product", productId };
+  } else if (path === "/home" || path === "/") {
+    return { route: "home", productId: null };
+  }
+
+  // Default to home
+  return { route: "home", productId: null };
+}
+
 export async function render(url: string) {
+  // Parse URL to determine route and productId
+  const { route, productId } = parseUrl(url);
+
   // Fetch products on the server
   const products = await getProducts();
 
@@ -13,8 +35,10 @@ export async function render(url: string) {
   const store = configureStore();
   store.dispatch(upsertProducts(products));
 
-  // Render with populated store
-  const app = renderToString(<WebApp store={store} />);
+  // Render with populated store and route info
+  const app = renderToString(
+    <WebApp store={store} initialRoute={route} initialProductId={productId} />
+  );
 
   // Serialize Redux state for hydration
   const preloadedState = store.getState();

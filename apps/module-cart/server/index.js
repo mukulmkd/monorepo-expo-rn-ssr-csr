@@ -37,7 +37,7 @@ const serverAliasPlugin = {
 };
 
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3003;
 
 app.use("/static", express.static(path.join(__dirname, "../dist/client")));
 app.get("/health", (_req, res) => res.status(200).send("ok"));
@@ -51,52 +51,53 @@ app.get("/api/products", async (_req, res) => {
     res.status(500).json({ error: "upstream_failed" });
   }
 });
-esbuild
-  .build({
-    entryPoints: [path.join(__dirname, "../web/client.tsx")],
-    bundle: true,
-    outfile: path.join(__dirname, "../dist/client/client.js"),
-    platform: "browser",
-    format: "iife",
-    target: "es2019",
-    sourcemap: true,
-    define: {
-      "process.env.NODE_ENV": JSON.stringify(
-        process.env.NODE_ENV || "development"
-      ),
-    },
-    jsx: "automatic",
-    loader: {
-      ".png": "file",
-      ".jpg": "file",
-      ".jpeg": "file",
-      ".svg": "file",
-    },
-    assetNames: "assets/[name]-[hash]",
-    plugins: [clientAliasPlugin],
-  })
-  .catch((err) => console.error("Client build failed", err));
+// Build client bundle (nodemon will restart on changes)
+const clientBuild = esbuild.build({
+  entryPoints: [path.join(__dirname, "../web/client.tsx")],
+  bundle: true,
+  outfile: path.join(__dirname, "../dist/client/client.js"),
+  platform: "browser",
+  format: "iife",
+  target: "es2019",
+  sourcemap: true,
+  define: {
+    "process.env.NODE_ENV": JSON.stringify(
+      process.env.NODE_ENV || "development"
+    ),
+  },
+  jsx: "automatic",
+  loader: {
+    ".png": "file",
+    ".jpg": "file",
+    ".jpeg": "file",
+    ".svg": "file",
+  },
+  assetNames: "assets/[name]-[hash]",
+  plugins: [clientAliasPlugin],
+});
+
+clientBuild.catch((err) => console.error("Client build failed", err));
 
 const serverOutfile = path.join(__dirname, "../dist/server/server.js");
-esbuild
-  .build({
-    entryPoints: [path.join(__dirname, "../web/server-entry.tsx")],
-    bundle: true,
-    outfile: serverOutfile,
-    platform: "node",
-    format: "cjs",
-    target: "node20",
-    jsx: "automatic",
-    external: ["react", "react-dom", "react-dom/server"],
-    plugins: [serverAliasPlugin],
-  })
-  .catch((err) => console.error("Server build failed", err));
+const serverBuild = esbuild.build({
+  entryPoints: [path.join(__dirname, "../web/server-entry.tsx")],
+  bundle: true,
+  outfile: serverOutfile,
+  platform: "node",
+  format: "cjs",
+  target: "node20",
+  jsx: "automatic",
+  external: ["react", "react-dom", "react-dom/server"],
+  plugins: [serverAliasPlugin],
+});
 
-app.use((req, res) => {
+serverBuild.catch((err) => console.error("Server build failed", err));
+
+app.use(async (req, res) => {
   try {
     delete require.cache[serverOutfile];
     const { render } = require(serverOutfile);
-    const html = render(req.url);
+    const html = await render(req.url);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(html);
   } catch (e) {

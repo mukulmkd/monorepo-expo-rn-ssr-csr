@@ -10,18 +10,29 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run -w @app/shell build && npm run -w @app/module-products build && npm run -w @app/module-cart build",
+    "build": "npm run -w @app/shell build && npm run -w @app/module-products build && npm run -w @app/module-cart build && npm run -w @app/module-pdp build",
     "typecheck": "npm -ws run typecheck",
     "lint": "npm -ws run lint",
     "dev": "npm run -w @app/shell dev",
     "dev:shell:ssr": "npm run -w @app/shell dev:web",
     "dev:products:ssr": "npm run -w @app/module-products dev:web",
     "dev:cart:ssr": "npm run -w @app/module-cart dev:web",
+    "dev:pdp:ssr": "npm run -w @app/module-pdp dev:web",
     "start:shell": "npm run -w @app/shell start",
     "start:products": "npm run -w @app/module-products start",
-    "start:cart": "npm run -w @app/module-cart start"
+    "start:cart": "npm run -w @app/module-cart start",
+    "start:pdp": "npm run -w @app/module-pdp start"
+  },
+  "dependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
   },
   "devDependencies": {
-    "@types/node": "^24.9.2"
+    "@types/node": "^24.9.2",
+    "nodemon": "^3.1.10"
+  },
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
   }
 }
