@@ -1,235 +1,138 @@
-# Distributing Expo Modules to Existing Native Apps
+# Distributing Expo Modules to Standalone Native Apps
 
-This guide explains how to build and distribute Expo-based React Native modules (like `module-products`) for integration into existing Android and iOS native applications.
+This document explains how the Expo-based modules in this repository (`module-products`, `module-cart`, `module-pdp`) are built and published so that **separate** native Android and iOS projects can consume them via Verdaccio.
 
-## Table of Contents
+Native apps now live outside this monorepo. This repo only owns the shared JS/TS modules plus the Verdaccio tooling.
 
-1. [Overview](#overview)
-2. [Distribution Options](#distribution-options)
-3. [Step-by-Step Guide](#step-by-step-guide)
-4. [Build Process](#build-process)
-5. [Integration Guide](#integration-guide)
-6. [Troubleshooting](#troubleshooting)
+---
 
 ## Overview
 
-Each module (`module-products`, `module-cart`, `module-pdp`) can be:
+1. Develop features inside the Expo modules located under `apps/`
+2. Publish modules to the local Verdaccio registry (`docs/LOCAL_REGISTRY.md`)
+3. In each native app repository, install the published packages and run Metro locally to create platform bundles
 
-- Built as standalone React Native bundles
-- Distributed to existing native Android/iOS apps
-- Integrated using React Native's bridge system
+---
 
 ## Distribution Options
 
-### Option 1: Metro Bundles (Recommended)
+| Option | Description | When to use |
+| --- | --- | --- |
+| **Verdaccio npm packages (recommended)** | Publish modules as npm packages (`@app/*`, `@pkg/*`) and install them in any native project. Bundles are created inside each native repo. | Daily development, multi-app sharing |
+| Metro bundle export | Build a standalone JS bundle directly from the module repo (`dist/android`, `dist/ios`) and drop it into a native project. | Offline distribution, one-off integrations |
 
-- Build JS bundle + assets using Metro bundler
-- Existing apps load bundle via React Native bridge
-- Best for: Quick integration without native code changes
+The rest of this doc focuses on the Verdaccio workflow.
 
-### Option 2: npm Package Distribution
+---
 
-- Package as npm package with peer dependencies
-- Apps install via npm and import directly
-- Best for: Reusable modules across multiple projects
+## Publishing Modules (from this monorepo)
 
-### Option 3: EAS Build (Expo Application Services)
+1. **Start Verdaccio**
+   ```bash
+   npm run verdaccio:start
+   ```
 
-- Build native apps with Expo tooling
-- Best for: Full Expo feature support
+2. **Log in / map scopes**
+   Follow the steps in `docs/LOCAL_REGISTRY.md` to authenticate and map the `@app` and `@pkg` scopes.
 
-## Step-by-Step Guide
+3. **Publish every package**
+   ```bash
+   npm run verdaccio:publish-all
+   ```
+   The helper verifies existing versions and skips re-publishing duplicates.
 
-### Step 1: Create Module Export Component
+4. **Version bumping**
+   - Increment the `version` field inside each package when behaviour changes
+   - Commit the change before publishing to keep versioning traceable
 
-Create `apps/module-products/ModuleExport.tsx`:
+---
+
+## Consuming Modules (outside this repo)
+
+See `docs/NATIVE_APP_CONSUMPTION.md` for detailed Android/iOS setup. At a high level:
+
+1. Configure `.npmrc` inside the native project to point `@app`/`@pkg` at Verdaccio
+2. `npm install @app/module-products` (and other packages)
+3. Create a Metro entry point that registers the component you want to render
+4. Run Metro bundling inside the native repo to produce platform-specific bundles (`react-native bundle ...`)
+5. Load the generated bundle via `ReactInstanceManager` / `RCTBridge` in the native codebase
+
+---
+
+## Package Responsibilities
+
+Each published module exposes a single entry component that wraps UI/state wiring:
 
 ```typescript
-import * as React from "react";
-import { Provider } from "react-redux";
-import { View, StyleSheet } from "react-native";
-import { ProductsScreen } from "@pkg/products-ui";
-import { configureStore, AppStore } from "@pkg/state";
-import { Header, Footer, Navigation } from "@pkg/ui";
-
-export type ModuleProductsProps = {
-  store?: AppStore;
-  onProductPress?: (productId: string) => void;
-  hideHeader?: boolean;
-  hideNavigation?: boolean;
-  hideFooter?: boolean;
-};
-
-export function ModuleProducts({
-  store,
-  onProductPress,
-  hideHeader = false,
-  hideNavigation = false,
-  hideFooter = false,
-}: ModuleProductsProps) {
-  const appStore = store || configureStore();
-
-  return (
-    <Provider store={appStore}>
-      <View style={styles.container}>
-        {!hideHeader && <Header />}
-        {!hideNavigation && <Navigation />}
-        <View style={styles.content}>
-          <ProductsScreen onProductPress={onProductPress} />
-        </View>
-        {!hideFooter && <Footer />}
-      </View>
-    </Provider>
-  );
+// apps/module-products/ModuleExport.tsx
+export function ModuleProducts(props: ModuleProductsProps) {
+  // Configure redux store, navigation shell, etc.
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { flex: 1 },
-});
-
 export default ModuleProducts;
+
+// apps/module-products/index.js
+export { default } from "./ModuleExport";
 ```
 
-### Step 2: Update Entry Point
+Keep the entry file minimal so consumers only have to `import ModuleProducts from "@app/module-products"`.
 
-Update `apps/module-products/index.js`:
+---
 
-```javascript
-import { ModuleProducts } from "./ModuleExport";
-
-// Default export for Expo app
-export { ModuleProducts };
-export default ModuleProducts;
-```
-
-### Step 3: Add Build Scripts
-
-Add to `apps/module-products/package.json`:
-
-```json
-{
-  "scripts": {
-    "build:bundle:ios": "npx react-native bundle --platform ios --dev false --entry-file ./index.js --bundle-output ./dist/ios/module-products.bundle --assets-dest ./dist/ios/assets",
-    "build:bundle:android": "npx react-native bundle --platform android --dev false --entry-file ./index.js --bundle-output ./dist/android/module-products.bundle --assets-dest ./dist/android/assets",
-    "build:bundles": "npm run build:bundle:ios && npm run build:bundle:android",
-    "prebuild:ios": "npx expo prebuild --platform ios --clean",
-    "prebuild:android": "npx expo prebuild --platform android --clean"
-  }
-}
-```
-
-### Step 4: Build Bundles
-
-```bash
-cd apps/module-products
-npm run build:bundles
-```
-
-Output will be in:
-
-- `dist/ios/module-products.bundle` + `dist/ios/assets/`
-- `dist/android/module-products.bundle` + `dist/android/assets/`
-
-## Build Process
-
-### Using Metro Bundler
-
-1. **Build iOS Bundle:**
-
-```bash
-npx react-native bundle \
-  --platform ios \
-  --dev false \
-  --entry-file index.js \
-  --bundle-output dist/ios/module-products.bundle \
-  --assets-dest dist/ios/assets \
-  --reset-cache
-```
-
-2. **Build Android Bundle:**
+## Metro Bundling Cheatsheet (run inside consumer projects)
 
 ```bash
 npx react-native bundle \
   --platform android \
-  --dev false \
   --entry-file index.js \
-  --bundle-output dist/android/module-products.bundle \
-  --assets-dest dist/android/assets \
-  --reset-cache
+  --bundle-output android/app/src/main/assets/index.android.bundle \
+  --assets-dest android/app/src/main/res \
+  --dev false
+
+npx react-native bundle \
+  --platform ios \
+  --entry-file index.js \
+  --bundle-output ios/main.jsbundle \
+  --assets-dest ios \
+  --dev false
 ```
 
-### Using Expo Prebuild (Optional)
+Your entry file typically looks like:
 
-If you need native projects for testing:
+```javascript
+import { AppRegistry } from "react-native";
+import ModuleProducts from "@app/module-products";
 
-```bash
-# Generate iOS project
-npx expo prebuild --platform ios --clean
-
-# Generate Android project
-npx expo prebuild --platform android --clean
-
-# Build bundles after prebuild
-npm run build:bundles
+AppRegistry.registerComponent("ModuleProducts", () => ModuleProducts);
 ```
 
-## Integration Guide
+---
 
-### iOS Integration
+## Dependency Expectations
 
-See `docs/IOS_INTEGRATION.md` for detailed iOS integration steps.
+Consumers must align major versions with the published modules:
 
-### Android Integration
+- `react` 19.1+
+- `react-native` 0.81+
+- `react-redux` 9.2+
+- `@reduxjs/toolkit` 2.9+
+- Expo modules compiled for SDK 54
 
-See `docs/ANDROID_INTEGRATION.md` for detailed Android integration steps.
+Treat the module packages’ `peerDependencies` as requirements in each native project.
 
-## Dependencies & Requirements
-
-**Existing apps must have:**
-
-- React Native >= 0.81.5
-- React >= 19.1.0
-- React Redux >= 9.2.0
-- @reduxjs/toolkit >= 2.9.2
-- Expo SDK (compatible version)
-
-**Module requires:**
-
-- All packages from `@pkg/*` (core, state, ui, products-ui, etc.)
+---
 
 ## Troubleshooting
 
-### Bundle Not Loading
+| Issue | Checklist |
+| --- | --- |
+| Metro cannot resolve `@pkg/*` | Ensure `.npmrc` for the native project points the scopes to Verdaccio and run `npm install` again |
+| Native crash looking for Hermes libs | Use JSC (`hermesEnabled=false`) or include Hermes binaries in the native project. See `docs/NATIVE_APP_CONSUMPTION.md` for template configs |
+| Assets missing | Copy `--assets-dest` output into the native resource folders each time you re-bundle |
 
-- Check bundle path in native code
-- Verify assets are included
-- Ensure React Native version compatibility
+---
 
-### Dependency Conflicts
+## Related Docs
 
-- Use `peerDependencies` in package.json
-- Ensure existing apps have required dependencies
-- Check for version mismatches
-
-### Assets Not Showing
-
-- Verify assets folder is copied to app bundle
-- Check asset paths in Metro bundle output
-- Ensure native app includes asset files
-
-## Versioning
-
-Recommended bundle naming:
-
-- `module-products-v1.0.0.bundle`
-- Include version in file/directory name for easy rollback
-
-## Next Steps
-
-After building bundles:
-
-1. Copy bundles + assets to native app projects
-2. Follow integration guides for iOS/Android
-3. Test in development environment
-4. Deploy to staging/production
+- **[LOCAL_REGISTRY.md](./LOCAL_REGISTRY.md)** – Starting Verdaccio and publishing packages
+- **[NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md)** – Android/iOS integration guides for external repos
+- **[PACKAGES.md](./PACKAGES.md)** – Complete package API documentation

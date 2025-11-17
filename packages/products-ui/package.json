@@ -11,8 +11,17 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@pkg/state": "*",
-    "@pkg/ui": "*",
-    "@pkg/core": "*"
+    "@pkg/state": "^0.1.0",
+    "@pkg/ui": "^0.1.0",
+    "@pkg/core": "^0.1.0"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-native": ">=0.81.0",
+    "react-redux": ">=9.0.0"
+  },
+  "publishConfig": {
+    "registry": "http://localhost:4873",
+    "access": "public"
   }
 }

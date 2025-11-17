@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View, Text, TouchableOpacity, Platform } from "react-native";
+import { View, Text, TouchableOpacity, Platform, NativeModules } from "react-native";
 import { useNavigation } from "../NavigationContext";
 
 type NavigationItem = {
@@ -10,6 +10,9 @@ type NavigationItem = {
 type NavigationProps = {
   onNavigate?: (path: string) => void;
 };
+
+// Get NavigationBridge from native modules (if available)
+const NavigationBridge = NativeModules.NavigationBridge;
 
 export function Navigation({ onNavigate }: NavigationProps) {
   const [activeDropdown, setActiveDropdown] = React.useState<string | null>(
@@ -24,6 +27,9 @@ export function Navigation({ onNavigate }: NavigationProps) {
     {
       label: "Products",
       items: ["All Products", "Electronics", "Fashion", "Home & Garden"],
+    },
+    {
+      label: "Cart",
     },
     {
       label: "Categories",
@@ -44,12 +50,31 @@ export function Navigation({ onNavigate }: NavigationProps) {
         ? "home"
         : label === "Products" || label === "All Products"
         ? "products"
+        : label === "Cart"
+        ? "cart"
         : label.toLowerCase();
 
-    if (onNavigate) {
-      onNavigate(route);
+    // If NavigationBridge is available (native app), use it
+    if (Platform.OS !== "web" && NavigationBridge) {
+      if (route === "products") {
+        NavigationBridge.navigateToProducts();
+      } else if (route === "cart") {
+        NavigationBridge.navigateToCart();
+      } else {
+        // For other routes, fall back to onNavigate or navigation context
+        if (onNavigate) {
+          onNavigate(route);
+        } else {
+          navigation.navigate(route);
+        }
+      }
     } else {
-      navigation.navigate(route);
+      // Web or no bridge - use onNavigate or navigation context
+      if (onNavigate) {
+        onNavigate(route);
+      } else {
+        navigation.navigate(route);
+      }
     }
     setActiveDropdown(null);
   };

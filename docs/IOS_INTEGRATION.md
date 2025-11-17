@@ -1,193 +1,193 @@
 # iOS Integration Guide
 
-This guide explains how to integrate React Native bundles (like `module-products`) into existing iOS applications.
+This guide explains how to integrate React Native modules from this monorepo into existing iOS applications using the **Verdaccio npm registry approach**.
+
+> **Note:** This guide provides a high-level overview. For detailed step-by-step instructions, see [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md).
 
 ## Prerequisites
 
 - Existing iOS app with React Native installed
 - React Native version >= 0.81.5
 - Xcode installed
+- Node.js >= 20
+- CocoaPods installed
+- Verdaccio running locally (see [LOCAL_REGISTRY.md](./LOCAL_REGISTRY.md))
 
-## Step 1: Add Bundle to Project
+## Overview
 
-1. Copy `module-products.bundle` to your iOS project:
+The recommended approach is to:
 
+1. Install modules as npm packages from Verdaccio
+2. Bundle modules using Metro inside your native project
+3. Load bundles via React Native bridge
+
+This is more maintainable than manually copying bundle files.
+
+## Quick Start
+
+1. **Configure npm to use Verdaccio**
+
+   Create `.npmrc` in your native project:
+   ```ini
+   @pkg:registry=http://localhost:4873
+   @app:registry=http://localhost:4873
    ```
-   ios/
-   └── Products/
-       └── module-products.bundle
+
+2. **Install modules**
+
+   ```bash
+   cd js  # or wherever you keep your JS workspace
+   npm install @app/module-products
    ```
 
-2. Copy assets folder:
+3. **Create entry point**
 
-   ```
-   ios/
-   └── Products/
-       └── assets/
-           ├── images/
-           └── fonts/
+   `js/index.js`:
+   ```javascript
+   import { AppRegistry } from "react-native";
+   import "@app/module-products"; // Registers "ModuleProducts"
    ```
 
-3. In Xcode, add files to project:
-   - Right-click project → "Add Files to [Project]"
-   - Select `module-products.bundle` and `assets` folder
-   - Ensure "Copy items if needed" is checked
-   - Add to target
+4. **Bundle for iOS**
 
-## Step 2: Create React Native View Controller
+   ```bash
+   npm run bundle:ios:products
+   ```
 
-Create `ProductsViewController.swift`:
+5. **Load in iOS ViewController**
+
+   See [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md) for complete ViewController implementation.
+
+## Detailed Integration
+
+For complete integration instructions including:
+- Directory structure
+- CocoaPods configuration
+- ViewController implementation
+- Bundle loading
+- Native module bridges
+
+See **[NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md)** - Section 3: iOS Project Template.
+
+## Alternative: Manual Bundle Approach
+
+If you prefer to manually copy bundles (not recommended for development):
+
+1. Build bundle from this monorepo
+2. Copy `main.jsbundle` to your iOS project
+3. Copy assets to the project
+4. Load bundle in your ViewController
+
+This approach is less flexible and harder to maintain. Use Verdaccio for better workflow.
+
+## React Native ViewController Example
+
+Basic ViewController to host a module:
 
 ```swift
 import UIKit
 import React
 
 class ProductsViewController: UIViewController {
-  var reactRootView: RCTRootView?
+    var reactRootView: RCTRootView?
+    var bridge: RCTBridge?
 
-  override func viewDidLoad() {
-    super.viewDidLoad()
-    loadReactNativeModule()
-  }
-
-  func loadReactNativeModule() {
-    // Path to bundle
-    guard let jsCodeLocation = Bundle.main.url(
-      forResource: "module-products",
-      withExtension: "bundle"
-    ) else {
-      print("Bundle not found")
-      return
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        loadReactNativeModule()
     }
 
-    // Create React root view
-    let rootView = RCTRootView(
-      bundleURL: jsCodeLocation,
-      moduleName: "ModuleProducts",
-      initialProperties: [
-        // Add any props here
-        "onProductPress": true
-      ],
-      launchOptions: nil
-    )
+    func loadReactNativeModule() {
+        guard let jsCodeLocation = Bundle.main.url(
+            forResource: "main",
+            withExtension: "jsbundle",
+            subdirectory: "ModuleProducts"
+        ) else {
+            print("Bundle not found")
+            return
+        }
 
-    rootView?.backgroundColor = .white
-    self.view = rootView
-    self.reactRootView = rootView
-  }
+        bridge = RCTBridge(bundleURL: jsCodeLocation, moduleProvider: nil, launchOptions: nil)
+        let rootView = RCTRootView(
+            bridge: bridge!,
+            moduleName: "ModuleProducts",
+            initialProperties: nil
+        )
 
-  override func viewWillDisappear(_ animated: Bool) {
-    super.viewWillDisappear(animated)
-    // Cleanup if needed
-  }
-}
-```
-
-## Step 3: Bridge Event Handlers (Optional)
-
-If you need to handle events from React Native:
-
-Create `ProductsBridge.swift`:
-
-```swift
-import Foundation
-import React
-
-@objc(ProductsBridge)
-class ProductsBridge: NSObject {
-
-  @objc static func requiresMainQueueSetup() -> Bool {
-    return true
-  }
-
-  // Method called from React Native
-  @objc func handleProductPress(_ productId: String) {
-    DispatchQueue.main.async {
-      // Handle product press event
-      print("Product pressed: \(productId)")
-      // Navigate or perform action in native app
+        rootView.backgroundColor = .white
+        self.view = rootView
+        self.reactRootView = rootView
     }
-  }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // Cleanup if needed
+    }
+
+    deinit {
+        bridge?.invalidate()
+    }
 }
 ```
 
-Create `ProductsBridge.m` (Objective-C bridge):
+## CocoaPods Configuration
 
-```objc
-#import <React/RCTBridgeModule.h>
+Your `Podfile` should include:
 
-@interface RCT_EXTERN_MODULE(ProductsBridge, NSObject)
+```ruby
+require_relative '../js/node_modules/react-native/scripts/autolink-ios'
 
-RCT_EXTERN_METHOD(handleProductPress:(NSString *)productId)
+platform :ios, '14.0'
 
-@end
+target 'YourApp' do
+  config = use_native_modules!
+
+  use_react_native!(
+    :path => '../js/node_modules/react-native',
+    :hermes_enabled => false,
+    :fabric_enabled => false
+  )
+end
 ```
 
-## Step 4: Update AppDelegate (if needed)
+Run `pod install` after configuration.
 
-If using React Native bridge:
+## Native Module Bridge (Optional)
 
-```swift
-import React
+If you need to communicate between React Native and native iOS:
 
-class AppDelegate: UIResponder, UIApplicationDelegate {
-  var reactBridge: RCTBridge?
-
-  func application(
-    _ application: UIApplication,
-    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-  ) -> Bool {
-    // Initialize React Native bridge if not already done
-    // Your existing React Native setup
-
-    return true
-  }
-}
-```
-
-## Step 5: Navigate to Products View
-
-In your existing iOS app:
-
-```swift
-// Push to products screen
-let productsVC = ProductsViewController()
-navigationController?.pushViewController(productsVC, animated: true)
-
-// Or present modally
-let productsVC = ProductsViewController()
-let nav = UINavigationController(rootViewController: productsVC)
-present(nav, animated: true)
-```
-
-## Testing
-
-1. Build and run iOS app
-2. Navigate to ProductsViewController
-3. Verify bundle loads correctly
-4. Test all functionality
+See [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md) for bridge implementation examples.
 
 ## Troubleshooting
 
 ### Bundle Not Found
-
-- Check bundle is included in "Copy Bundle Resources" build phase
-- Verify bundle name matches exactly (case-sensitive)
+- Verify bundle was generated: `ls ios/ModuleProducts/main.jsbundle`
+- Check bundle script output for errors
+- Ensure bundle is included in "Copy Bundle Resources" build phase
+- Verify Metro can resolve `@app/*` packages (check `.npmrc`)
 
 ### Module Not Registered
+- Verify module is imported in `js/index.js`
+- Check module name matches: `"ModuleProducts"` (case-sensitive)
+- Ensure `AppRegistry.registerComponent` is called in the module
 
-- Ensure `registerRootComponent` or `AppRegistry.registerComponent` is called in bundle
-- Check module name matches in `RCTRootView` and bundle
+### Package Resolution Errors
+- Verify Verdaccio is running: `curl http://localhost:4873`
+- Check `.npmrc` configuration
+- Run `npm install` again in the JS workspace
 
-### Assets Missing
+### CocoaPods Issues
+- Run `pod deintegrate && pod install`
+- Clear derived data: `rm -rf ~/Library/Developer/Xcode/DerivedData`
+- Check Podfile syntax
 
-- Verify assets folder is included in project
-- Check asset paths in React Native code
+### Hermes Issues
+- See [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md) for Hermes configuration
+- Consider using JSC if Hermes causes issues
 
-## Dependencies
+## Related Documentation
 
-Ensure your iOS project includes:
-
-- React Native framework
-- React Native dependencies (from Podfile)
-- Redux and React Redux (if using state management)
+- **[NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md)** - Complete Android/iOS integration guide
+- **[LOCAL_REGISTRY.md](./LOCAL_REGISTRY.md)** - Setting up and using Verdaccio
+- **[MODULE_DISTRIBUTION.md](./MODULE_DISTRIBUTION.md)** - How modules are published
+- **[PACKAGES.md](./PACKAGES.md)** - Package API documentation
