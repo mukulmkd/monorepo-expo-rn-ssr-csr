@@ -10,4 +10,5 @@ coverage/
 npm-cache/
 **/npm-cache/
 .verdaccio/
-
+.vscode/
+.idea/
