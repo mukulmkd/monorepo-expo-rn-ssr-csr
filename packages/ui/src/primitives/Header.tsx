@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View, Text, TouchableOpacity, Platform } from "react-native";
+import { View, Text, TouchableOpacity, Platform, NativeModules } from "react-native";
 import { useSelector } from "react-redux";
 import { useNavigation } from "../NavigationContext";
 
@@ -10,6 +10,9 @@ type RootState = {
 type HeaderProps = {
   onCartPress?: () => void;
 };
+
+// Get NavigationBridge from native modules (if available)
+const NavigationBridge = NativeModules.NavigationBridge;
 
 export function Header({ onCartPress }: HeaderProps) {
   const cartItems = useSelector((state: RootState) => state.cart.items);
@@ -38,7 +41,11 @@ export function Header({ onCartPress }: HeaderProps) {
   const handleCartButtonPress = React.useCallback(() => {
     if (onCartPress) {
       onCartPress();
+    } else if (Platform.OS !== "web" && NavigationBridge) {
+      // Use native bridge to navigate to Cart
+      NavigationBridge.navigateToCart();
     } else {
+      // Web or no bridge - use navigation context
       navigation.navigate("cart");
     }
   }, [onCartPress, navigation]);
@@ -77,7 +84,13 @@ export function Header({ onCartPress }: HeaderProps) {
             </TouchableOpacity>
           )}
           <TouchableOpacity
-            onPress={() => navigation.navigate("home")}
+            onPress={() => {
+              if (Platform.OS !== "web" && NavigationBridge) {
+                NavigationBridge.navigateToProducts();
+              } else {
+                navigation.navigate("home");
+              }
+            }}
             activeOpacity={0.7}
           >
             <Text style={{ color: "#fff", fontSize: 24, fontWeight: "bold" }}>

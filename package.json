@@ -21,7 +21,10 @@
     "start:shell": "npm run -w @app/shell start",
     "start:products": "npm run -w @app/module-products start",
     "start:cart": "npm run -w @app/module-cart start",
-    "start:pdp": "npm run -w @app/module-pdp start"
+    "start:pdp": "npm run -w @app/module-pdp start",
+    "verdaccio:start": "npx verdaccio --config tools/verdaccio/config.yaml",
+    "verdaccio:reset": "rm -rf .verdaccio/storage",
+    "publish:verdaccio": "node tools/verdaccio/publish-all.mjs"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.19",
@@ -45,7 +48,8 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.0.2",
     "nodemon": "^3.1.10",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "verdaccio": "^6.0.5"
   },
   "overrides": {
     "react": "19.1.0",

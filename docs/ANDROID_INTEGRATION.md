@@ -1,214 +1,219 @@
 # Android Integration Guide
 
-This guide explains how to integrate React Native bundles (like `module-products`) into existing Android applications.
+This guide explains how to integrate React Native modules from this monorepo into existing Android applications using the **Verdaccio npm registry approach**.
+
+> **Note:** This guide provides a high-level overview. For detailed step-by-step instructions, see [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md).
 
 ## Prerequisites
 
 - Existing Android app with React Native installed
 - React Native version >= 0.81.5
 - Android Studio installed
+- Node.js >= 20
+- Verdaccio running locally (see [LOCAL_REGISTRY.md](./LOCAL_REGISTRY.md))
 
-## Step 1: Add Bundle to Project
+## ⚠️ Important: First-Time Build (30+ Minutes)
 
-1. Copy `module-products.bundle` to assets:
+**Before integrating modules, you must build React Native from source.** This is a **one-time setup** that takes 20-30+ minutes on first run.
 
+### Why Build from Source?
+
+React Native 0.81.5 pre-built AARs don't include `libhermes_executor.so`, which is required for Hermes to work. Building from source ensures:
+
+- ✅ Hermes executor library is included
+- ✅ Full control over React Native build
+- ✅ Better long-term maintainability
+
+### What Gets Built?
+
+The source build compiles:
+
+1. **Hermes Engine** - The JavaScript engine (C++/native code)
+2. **React Native Native Libraries** - Android native code
+3. **Hermes Executor Library** - `libhermes_executor.so` (missing from pre-built AARs)
+
+### When to Run
+
+- **First time setup** - Required before integrating any modules
+- **After React Native version updates** - If you upgrade React Native
+- **After cleaning build artifacts** - If you run `./gradlew clean`
+
+### How to Run
+
+```bash
+cd native-android  # or your Android project root
+./scripts/build-react-native.sh
+```
+
+**Note:** This is a **one-time infrastructure setup**, not needed for each module. Once complete, module integration (Products, Cart, PDP) only requires fast JavaScript bundling (seconds), not native compilation.
+
+### Module Integration vs Source Build
+
+- **30-minute build**: One-time React Native source build (native C++/Java compilation)
+- **Module builds**: Fast JavaScript bundling (seconds) - Products, Cart, PDP are just JS bundles
+- **Why modules don't need it**: They're JavaScript that runs in the same React Native instance
+
+> **For detailed build documentation**, see the native Android project's `docs/BUILD_FROM_SOURCE.md` file (if available) or refer to the React Native source build process in your Android project.
+
+## Overview
+
+The recommended approach is to:
+
+1. Install modules as npm packages from Verdaccio
+2. Bundle modules using Metro inside your native project
+3. Load bundles via React Native bridge
+
+This is more maintainable than manually copying bundle files.
+
+## Quick Start
+
+1. **Configure npm to use Verdaccio**
+
+   Create `.npmrc` in your native project:
+
+   ```ini
+   @pkg:registry=http://localhost:4873
+   @app:registry=http://localhost:4873
    ```
-   android/app/src/main/assets/
-   └── module-products.bundle
+
+2. **Install modules**
+
+   ```bash
+   cd js  # or wherever you keep your JS workspace
+   npm install @app/module-products
    ```
 
-2. Copy assets folder:
-   ```
-   android/app/src/main/assets/
-   └── assets/
-       ├── images/
-       └── fonts/
+3. **Create entry point**
+
+   `js/index.js`:
+
+   ```javascript
+   import { AppRegistry } from "react-native";
+   import "@app/module-products"; // Registers "ModuleProducts"
    ```
 
-## Step 2: Create React Native Activity
+4. **Bundle for Android**
 
-Create `ProductsActivity.kt`:
+   ```bash
+   npm run bundle:products
+   ```
+
+5. **Load in Android Activity**
+
+   See [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md) for complete Activity implementation.
+
+## Detailed Integration
+
+For complete integration instructions including:
+
+- Directory structure
+- Gradle configuration
+- Activity implementation
+- Bundle loading
+- Native module bridges
+
+See **[NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md)** - Section 2: Android Project Template.
+
+## Alternative: Manual Bundle Approach
+
+If you prefer to manually copy bundles (not recommended for development):
+
+1. Build bundle from this monorepo
+2. Copy `index.android.bundle` to `android/app/src/main/assets/`
+3. Copy assets to `android/app/src/main/res/`
+4. Load bundle in your Activity
+
+This approach is less flexible and harder to maintain. Use Verdaccio for better workflow.
+
+## React Native Activity Example
+
+Basic Activity to host a module:
 
 ```kotlin
-package com.yourapp.products
+class ProductsActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
+    private var reactRootView: ReactRootView? = null
+    private val reactInstanceManager get() =
+        (application as ReactApplication).reactNativeHost.reactInstanceManager
 
-import android.os.Bundle
-import com.facebook.react.ReactActivity
-import com.facebook.react.ReactActivityDelegate
-import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
-import com.facebook.react.defaults.DefaultReactActivityDelegate
-
-class ProductsActivity : ReactActivity() {
-
-  override fun getMainComponentName(): String {
-    return "ModuleProducts"
-  }
-
-  override fun createReactActivityDelegate(): ReactActivityDelegate {
-    return object : DefaultReactActivityDelegate(
-      this,
-      mainComponentName,
-      fabricEnabled
-    ) {
-      override fun getLaunchOptions(): Bundle? {
-        val initialProperties = Bundle()
-        // Add any initial props here
-        // initialProperties.putString("someKey", "someValue")
-        return initialProperties
-      }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        reactRootView = ReactRootView(this).also {
+            it.startReactApplication(reactInstanceManager, "ModuleProducts", null)
+            setContentView(it)
+        }
     }
-  }
-}
-```
 
-## Step 3: Register Activity in AndroidManifest.xml
-
-Add to `android/app/src/main/AndroidManifest.xml`:
-
-```xml
-<activity
-  android:name=".products.ProductsActivity"
-  android:label="Products"
-  android:theme="@style/AppTheme"
-  android:configChanges="keyboard|keyboardHidden|orientation|screenSize|uiMode"
-  android:windowSoftInputMode="adjustResize" />
-```
-
-## Step 4: Create Native Module Bridge (Optional)
-
-If you need to handle events from React Native:
-
-Create `ProductsBridge.kt`:
-
-```kotlin
-package com.yourapp.products
-
-import com.facebook.react.bridge.ReactContextBaseJavaModule
-import com.facebook.react.bridge.ReactMethod
-import com.facebook.react.bridge.Promise
-import android.os.Handler
-import android.os.Looper
-
-class ProductsBridge(reactContext: ReactApplicationContext) :
-  ReactContextBaseJavaModule(reactContext) {
-
-  override fun getName(): String {
-    return "ProductsBridge"
-  }
-
-  @ReactMethod
-  fun handleProductPress(productId: String) {
-    // Handle product press event
-    // Navigate or perform action in native app
-    // Use Handler to run on main thread if needed
-    Handler(Looper.getMainLooper()).post {
-      // Your native code here
+    override fun onResume() {
+        super.onResume()
+        reactInstanceManager.onHostResume(this, this)
     }
-  }
+
+    override fun onPause() {
+        reactInstanceManager.onHostPause(this)
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        reactRootView?.unmountReactApplication()
+        reactRootView = null
+        super.onDestroy()
+    }
+
+    override fun onBackPressed() {
+        reactInstanceManager.onBackPressed()
+    }
+
+    override fun invokeDefaultOnBackPressed() {
+        super.onBackPressed()
+    }
 }
 ```
 
-Create `ProductsPackage.kt`:
+## Native Module Bridge (Optional)
 
-```kotlin
-package com.yourapp.products
+If you need to communicate between React Native and native Android:
 
-import com.facebook.react.ReactPackage
-import com.facebook.react.bridge.NativeModule
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.uimanager.ViewManager
+See [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md) for bridge implementation examples.
 
-class ProductsPackage : ReactPackage {
-  override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-    return listOf(ProductsBridge(reactContext))
-  }
+## Dependencies
 
-  override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
-    return emptyList()
-  }
+Your `app/build.gradle` should include:
+
+```gradle
+dependencies {
+    implementation("com.facebook.react:react-android:0.81.5")
+    // Add other React Native dependencies as needed
 }
 ```
-
-Register in `MainApplication.kt`:
-
-```kotlin
-override fun getPackages(): List<ReactPackage> {
-  return listOf(
-    MainReactPackage(),
-    ProductsPackage() // Add your package
-  )
-}
-```
-
-## Step 5: Navigate to Products Activity
-
-In your existing Android app:
-
-```kotlin
-// Start products activity
-val intent = Intent(this, ProductsActivity::class.java)
-startActivity(intent)
-```
-
-## Step 6: Load Bundle from Assets
-
-If loading bundle from assets, ensure React Native is configured:
-
-In `MainApplication.kt`:
-
-```kotlin
-override fun onCreate() {
-  super.onCreate()
-
-  // Your existing React Native initialization
-  SoLoader.init(this, false)
-
-  // Bundle will be loaded from assets automatically
-  // when ProductsActivity starts
-}
-```
-
-## Testing
-
-1. Build and run Android app
-2. Navigate to ProductsActivity
-3. Verify bundle loads correctly
-4. Test all functionality
 
 ## Troubleshooting
 
 ### Bundle Not Found
 
-- Check bundle is in `assets/` folder
-- Verify bundle name matches exactly (case-sensitive)
-- Ensure assets are included in APK build
+- Verify bundle was generated: `ls android/app/src/main/assets/index.android.bundle`
+- Check bundle script output for errors
+- Ensure Metro can resolve `@app/*` packages (check `.npmrc`)
 
 ### Module Not Registered
 
-- Check module name matches in Activity and bundle
-- Verify `AppRegistry.registerComponent` is called in bundle
+- Verify module is imported in `js/index.js`
+- Check module name matches: `"ModuleProducts"` (case-sensitive)
+- Ensure `AppRegistry.registerComponent` is called in the module
 
-### Assets Missing
+### Package Resolution Errors
 
-- Verify assets folder is in `assets/` directory
-- Check asset paths in React Native code
-- Ensure assets are included in APK
+- Verify Verdaccio is running: `curl http://localhost:4873`
+- Check `.npmrc` configuration
+- Run `npm install` again in the JS workspace
 
-## Dependencies
+### Hermes Issues
 
-Update `build.gradle` if needed:
+- See [NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md) for Hermes configuration
+- Consider using JSC if Hermes causes issues
 
-```gradle
-dependencies {
-  implementation "com.facebook.react:react-native:+"
-  // Add other React Native dependencies
-}
-```
+## Related Documentation
 
-Ensure `settings.gradle` includes React Native:
-
-```gradle
-include ':app'
-include ':react-native-*'
-// Your React Native modules
-```
+- **[NATIVE_APP_CONSUMPTION.md](./NATIVE_APP_CONSUMPTION.md)** - Complete Android/iOS integration guide
+- **[LOCAL_REGISTRY.md](./LOCAL_REGISTRY.md)** - Setting up and using Verdaccio
+- **[MODULE_DISTRIBUTION.md](./MODULE_DISTRIBUTION.md)** - How modules are published
+- **[PACKAGES.md](./PACKAGES.md)** - Package API documentation

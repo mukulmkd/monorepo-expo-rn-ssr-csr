@@ -9,5 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo 'no lint configured'"
+  },
+  "publishConfig": {
+    "registry": "http://localhost:4873",
+    "access": "public"
   }
 }

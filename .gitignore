@@ -9,4 +9,6 @@ coverage/
 # npm cache directories (anywhere in the repo)
 npm-cache/
 **/npm-cache/
-
+.verdaccio/
+.vscode/
+.idea/
