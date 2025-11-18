@@ -15,10 +15,13 @@ const slice = createSlice({
     upsertProduct(state, action: PayloadAction<Product>) {
       state.items[action.payload.id] = action.payload;
     },
+    setProductsItems(state, action: PayloadAction<{ items: Record<string, Product> }>) {
+      state.items = action.payload.items;
+    },
   },
 });
 
-export const { upsertProducts, upsertProduct } = slice.actions;
+export const { upsertProducts, upsertProduct, setProductsItems } = slice.actions;
 export const productsReducer = slice.reducer;
 
 // Memoized selector to get products as array

@@ -3,7 +3,7 @@ import { Provider } from "react-redux";
 import { View, Platform } from "react-native";
 import { Header, Footer, Navigation } from "@pkg/ui";
 import { CartScreen } from "@pkg/cart-ui";
-import { configureStore, AppStore, loadPersistedState } from "@pkg/state";
+import { configureStore, AppStore, loadPersistedState, setCartItems, setProductsItems } from "@pkg/state";
 import { NativeModules } from "react-native";
 
 type AppProps = {
@@ -20,13 +20,13 @@ try {
 }
 
 export default function App({ store }: AppProps) {
-  // Initialize store immediately - always create synchronously for instant rendering
-  // For Expo development, we don't need persisted state
-  const [appStore, setAppStore] = React.useState<AppStore>(
-    store || configureStore()
-  );
+  // Initialize store with lazy loading of persisted state
+  // For native apps, we'll load persisted state immediately and hydrate
+  const [appStore] = React.useState<AppStore>(() => {
+    return store || configureStore();
+  });
 
-  // Optionally load persisted state in the background (for real native apps only)
+  // Load persisted state immediately on mount (for real native apps only)
   React.useEffect(() => {
     if (store) {
       return; // Store already provided, no need to load persisted state
@@ -43,39 +43,41 @@ export default function App({ store }: AppProps) {
       return; // Skip in Expo Go
     }
 
-    // Load persisted state asynchronously for native apps only
-    // This happens in the background and updates the store if needed
+    // Load persisted state immediately and hydrate the store
     let mounted = true;
     loadPersistedState()
       .then((persistedState) => {
-        if (mounted && persistedState) {
-          // Recreate store with persisted state
-          setAppStore(configureStore(persistedState));
+        if (!mounted) {
+          return;
+        }
+
+        if (persistedState) {
+          // Hydrate store by dispatching actions - this will trigger re-renders
+          if (persistedState.cart && persistedState.cart.items) {
+            appStore.dispatch(setCartItems({ items: persistedState.cart.items }));
+          }
+          if (persistedState.products && persistedState.products.items) {
+            appStore.dispatch(setProductsItems({ items: persistedState.products.items }));
+          }
         }
       })
       .catch((error) => {
-        console.warn(
-          "Failed to load persisted state, using fresh store:",
-          error
-        );
+        // Silently fail - use fresh store
       });
 
     return () => {
       mounted = false;
     };
-  }, [store]);
+  }, [store, appStore]);
 
   const handleProductPress = React.useCallback((productId: string) => {
     if (Platform.OS === "web") {
       // Web navigation - could use React Navigation or window.location
-      console.log("Navigate to PDP:", productId);
     } else if (NavigationBridge) {
       // Real native app - use native bridge to navigate to PDP
       NavigationBridge.navigateToPDP(productId);
-    } else {
-      // Expo Go - just log for now (could add in-app navigation later)
-      console.log("Navigate to PDP:", productId, "(Expo Go - NavigationBridge not available)");
     }
+    // Expo Go - no navigation available
   }, []);
 
   // Always render immediately - no loading state needed since store is created synchronously

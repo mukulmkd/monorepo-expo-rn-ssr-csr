@@ -7,7 +7,7 @@ if (Platform.OS !== "web") {
   try {
     AsyncStorage = require("@react-native-async-storage/async-storage").default;
   } catch (e) {
-    console.warn("AsyncStorage not available:", e);
+    // AsyncStorage not available
   }
 }
 
@@ -27,7 +27,7 @@ export async function loadCartState(): Promise<AppState["cart"] | null> {
       return JSON.parse(cartData);
     }
   } catch (error) {
-    console.warn("Failed to load cart state from storage:", error);
+    // Failed to load cart state
   }
   return null;
 }
@@ -42,7 +42,7 @@ export async function saveCartState(cart: AppState["cart"]): Promise<void> {
   try {
     await AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
   } catch (error) {
-    console.warn("Failed to save cart state to storage:", error);
+    // Failed to save cart state
   }
 }
 
@@ -59,7 +59,7 @@ export async function loadProductsState(): Promise<AppState["products"] | null> 
       return JSON.parse(productsData);
     }
   } catch (error) {
-    console.warn("Failed to load products state from storage:", error);
+    // Failed to load products state
   }
   return null;
 }
@@ -76,7 +76,7 @@ export async function saveProductsState(
   try {
     await AsyncStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
   } catch (error) {
-    console.warn("Failed to save products state to storage:", error);
+    // Failed to save products state
   }
 }
 
@@ -96,7 +96,6 @@ export async function loadPersistedState(): Promise<Partial<AppState> | null> {
 
     return Object.keys(state).length > 0 ? state : null;
   } catch (error) {
-    console.warn("Failed to load persisted state:", error);
     return null;
   }
 }

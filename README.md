@@ -123,8 +123,10 @@ npm run verdaccio:publish-all
 **Expected output**: You should see packages being published:
 ```
 ✅ Published @pkg/core@0.1.0
-✅ Published @pkg/state@0.1.0
-✅ Published @app/module-products@0.1.2
+✅ Published @pkg/state@0.1.5
+✅ Published @app/module-products@0.1.8
+✅ Published @app/module-cart@0.1.8
+✅ Published @app/module-pdp@0.1.8
 ...
 ```
 
