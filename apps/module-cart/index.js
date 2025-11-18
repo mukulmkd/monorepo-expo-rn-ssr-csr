@@ -1,5 +1,4 @@
 import { AppRegistry, Platform } from "react-native";
-import { registerRootComponent } from "expo";
 
 // Import both App components
 // Metro will automatically resolve platform-specific extensions when bundling,
@@ -17,5 +16,18 @@ const App = Platform.OS === "web" ? AppBase : AppNative;
 AppRegistry.registerComponent("ModuleCart", () => App);
 
 // Register with Expo for development (Expo Go, web via Expo, etc.)
-// This registers it as "main" which Expo expects - must be called unconditionally
-registerRootComponent(App);
+// This registers it as "main" which Expo expects
+// expo is a peerDependency, so it may not be available in native app bundles
+// In that case, AppRegistry.registerComponent above is sufficient
+let registerRootComponent;
+try {
+  // Try to import expo - this will work in Expo development but may fail in native bundles
+  // If it fails, we'll just use AppRegistry (which is sufficient for native apps)
+  registerRootComponent = require("expo").registerRootComponent;
+  if (registerRootComponent) {
+    registerRootComponent(App);
+  }
+} catch (e) {
+  // expo not available - this is fine for native app bundles
+  // Native apps use AppRegistry.registerComponent above
+}
