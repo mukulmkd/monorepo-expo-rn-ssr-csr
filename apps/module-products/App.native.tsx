@@ -1,9 +1,15 @@
 import * as React from "react";
 import { Provider } from "react-redux";
-import { View, Platform } from "react-native";
+import { View, Platform, DeviceEventEmitter } from "react-native";
 import { Header, Footer, Navigation } from "@pkg/ui";
 import { ProductsScreen } from "@pkg/products-ui";
-import { configureStore, AppStore, loadPersistedState } from "@pkg/state";
+import {
+  configureStore,
+  AppStore,
+  loadPersistedState,
+  setCartItems,
+  setProductsItems,
+} from "@pkg/state";
 import { NativeModules } from "react-native";
 
 type AppProps = {
@@ -20,14 +26,14 @@ try {
 }
 
 export default function App({ store }: AppProps) {
-  // Initialize store immediately - always create synchronously for instant rendering
-  // This works for all platforms: Expo Go, native apps, and web
-  const [appStore, setAppStore] = React.useState<AppStore>(
-    store || configureStore()
-  );
+  // Initialize store with lazy loading of persisted state
+  // For native apps, we'll load persisted state immediately and hydrate
+  const [appStore] = React.useState<AppStore>(() => {
+    return store || configureStore();
+  });
 
-  // Optionally load persisted state in the background (for real native apps only)
-  React.useEffect(() => {
+  // Function to load and hydrate persisted state
+  const loadAndHydrateState = React.useCallback(() => {
     if (store) {
       return; // Store already provided, no need to load persisted state
     }
@@ -43,45 +49,66 @@ export default function App({ store }: AppProps) {
       return; // Skip in Expo Go
     }
 
-    // Load persisted state asynchronously for native apps only
-    // This happens in the background and updates the store if needed
-    let mounted = true;
+    // Load persisted state immediately and hydrate the store
     loadPersistedState()
       .then((persistedState) => {
-        if (mounted && persistedState) {
-          // Recreate store with persisted state
-          // Note: This is a simplified approach - in production you might want to merge states
-          setAppStore(configureStore(persistedState));
+        if (persistedState) {
+          // Hydrate store by dispatching actions - this will trigger re-renders
+          if (persistedState.cart && persistedState.cart.items) {
+            appStore.dispatch(
+              setCartItems({ items: persistedState.cart.items })
+            );
+          } else {
+            // Clear cart if no persisted items
+            appStore.dispatch(setCartItems({ items: {} }));
+          }
+          if (persistedState.products && persistedState.products.items) {
+            appStore.dispatch(
+              setProductsItems({ items: persistedState.products.items })
+            );
+          }
+        } else {
+          // Clear cart if no persisted state
+          appStore.dispatch(setCartItems({ items: {} }));
         }
       })
       .catch((error) => {
-        // Silently fail - using fresh store is fine
-        console.warn(
-          "Failed to load persisted state, using fresh store:",
-          error
-        );
+        // Silently fail - use fresh store
       });
+  }, [store, appStore]);
+
+  // Load persisted state immediately on mount (for real native apps only)
+  React.useEffect(() => {
+    loadAndHydrateState();
+  }, [loadAndHydrateState]);
+
+  // Listen for reload event from native side (when view appears)
+  React.useEffect(() => {
+    if (Platform.OS === "web" || !NavigationBridge) {
+      return; // Skip for web or Expo Go
+    }
+
+    // Listen for native event to reload state
+    const subscription = DeviceEventEmitter.addListener(
+      "ReloadPersistedState",
+      () => {
+        loadAndHydrateState();
+      }
+    );
 
     return () => {
-      mounted = false;
+      subscription.remove();
     };
-  }, [store]);
+  }, [loadAndHydrateState]);
 
   const handleProductPress = React.useCallback((productId: string) => {
     if (Platform.OS === "web") {
       // Web navigation - could use React Navigation or window.location
-      console.log("Navigate to PDP:", productId);
     } else if (NavigationBridge) {
       // Real native app - use native bridge to navigate to PDP
       NavigationBridge.navigateToPDP(productId);
-    } else {
-      // Expo Go - just log for now (could add in-app navigation later)
-      console.log(
-        "Navigate to PDP:",
-        productId,
-        "(Expo Go - NavigationBridge not available)"
-      );
     }
+    // Expo Go - no navigation available
   }, []);
 
   // Always render immediately - no loading state needed since store is created synchronously

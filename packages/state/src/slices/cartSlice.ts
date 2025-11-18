@@ -21,8 +21,11 @@ const slice = createSlice({
     removeFromCart(state, action: PayloadAction<{ productId: string }>) {
       delete state.items[action.payload.productId];
     },
+    setCartItems(state, action: PayloadAction<{ items: Record<string, CartItem> }>) {
+      state.items = action.payload.items;
+    },
   },
 });
 
-export const { addToCart, removeFromCart } = slice.actions;
+export const { addToCart, removeFromCart, setCartItems } = slice.actions;
 export const cartReducer = slice.reducer;

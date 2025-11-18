@@ -24,15 +24,15 @@ const persistenceMiddleware: Middleware =
 
     // Persist cart state whenever it changes
     if (action?.type?.startsWith("cart/")) {
-      saveCartState(state.cart).catch((err) => {
-        console.warn("Failed to persist cart state:", err);
+      saveCartState(state.cart).catch(() => {
+        // Failed to persist cart state
       });
     }
 
     // Persist products state whenever it changes
     if (action?.type?.startsWith("products/")) {
-      saveProductsState(state.products).catch((err) => {
-        console.warn("Failed to persist products state:", err);
+      saveProductsState(state.products).catch(() => {
+        // Failed to persist products state
       });
     }
 
