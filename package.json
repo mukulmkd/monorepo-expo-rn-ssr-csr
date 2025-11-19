@@ -24,7 +24,9 @@
     "start:pdp": "npm run -w @app/module-pdp start",
     "verdaccio:start": "npx verdaccio --config tools/verdaccio/config.yaml",
     "verdaccio:reset": "rm -rf .verdaccio/storage",
-    "publish:verdaccio": "node tools/verdaccio/publish-all.mjs"
+    "publish:verdaccio": "node tools/verdaccio/publish-all.mjs",
+    "framework:ios:build:products": "cd frameworks/ios/module-products-framework && ./scripts/build-xcframework.sh",
+    "framework:ios:build:all": "npm run framework:ios:build:products"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.19",

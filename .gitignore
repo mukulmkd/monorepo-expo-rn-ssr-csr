@@ -12,3 +12,9 @@ npm-cache/
 .verdaccio/
 .vscode/
 .idea/
+# Framework build artifacts
+frameworks/ios/**/build/
+frameworks/ios/**/dist/
+frameworks/ios/**/DerivedData/
+frameworks/ios/**/*.xcframework
+frameworks/ios/**/*.xcframework.zip
