@@ -1,0 +1,1 @@
+CoreModules/RCTWebSocketModule.h

@@ -1,0 +1,1 @@
+CoreModules/RCTEventDispatcher.h

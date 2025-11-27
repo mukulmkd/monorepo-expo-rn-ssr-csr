@@ -1,0 +1,1 @@
+CoreModules/RCTExceptionsManager.h

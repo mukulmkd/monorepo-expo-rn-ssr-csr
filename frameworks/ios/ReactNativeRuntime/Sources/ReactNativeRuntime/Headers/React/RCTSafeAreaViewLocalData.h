@@ -1,0 +1,1 @@
+Views/SafeAreaView/RCTSafeAreaViewLocalData.h

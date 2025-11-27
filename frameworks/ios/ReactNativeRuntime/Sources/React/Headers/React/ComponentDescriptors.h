@@ -1,0 +1,1 @@
+FBReactNativeSpec/react/renderer/components/FBReactNativeSpec/ComponentDescriptors.h

@@ -26,7 +26,12 @@
     "verdaccio:reset": "rm -rf .verdaccio/storage",
     "publish:verdaccio": "node tools/verdaccio/publish-all.mjs",
     "framework:ios:build:products": "cd frameworks/ios/module-products-framework && ./scripts/build-xcframework.sh",
-    "framework:ios:build:all": "npm run framework:ios:build:products"
+    "framework:ios:build:all": "npm run framework:ios:build:products",
+    "framework:ios:spm:runtime": "./scripts/generate-react-native-runtime-spm.sh",
+    "framework:ios:spm:products": "./scripts/generate-module-framework-spm.sh products",
+    "framework:ios:spm:cart": "./scripts/generate-module-framework-spm.sh cart",
+    "framework:ios:spm:pdp": "./scripts/generate-module-framework-spm.sh pdp",
+    "framework:ios:spm:all": "npm run framework:ios:spm:products & npm run framework:ios:spm:cart & npm run framework:ios:spm:pdp & wait"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.19",

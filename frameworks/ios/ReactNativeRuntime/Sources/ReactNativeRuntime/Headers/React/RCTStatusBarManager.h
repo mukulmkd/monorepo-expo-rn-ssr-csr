@@ -1,0 +1,1 @@
+CoreModules/RCTStatusBarManager.h

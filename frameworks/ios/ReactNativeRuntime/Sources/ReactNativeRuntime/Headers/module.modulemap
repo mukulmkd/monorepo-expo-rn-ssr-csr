@@ -1,0 +1,10 @@
+module ReactCommon {
+    umbrella header "ReactCommon/ReactCommon.h"
+    export *
+    module * { export * }
+}
+
+module Yoga {
+    umbrella header "yoga/Yoga.h"
+    export *
+}

@@ -1,0 +1,1 @@
+Modules/RCTEventEmitter.h

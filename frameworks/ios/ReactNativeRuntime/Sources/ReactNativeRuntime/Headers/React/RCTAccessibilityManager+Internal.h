@@ -1,0 +1,1 @@
+CoreModules/RCTAccessibilityManager+Internal.h

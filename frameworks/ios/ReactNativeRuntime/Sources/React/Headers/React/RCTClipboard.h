@@ -1,0 +1,1 @@
+CoreModules/RCTClipboard.h

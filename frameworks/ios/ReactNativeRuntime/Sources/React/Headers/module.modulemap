@@ -1,0 +1,5 @@
+module React {
+    umbrella header "React/React.h"
+    export *
+    module * { export * }
+}

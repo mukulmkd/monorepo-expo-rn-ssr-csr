@@ -1,0 +1,1 @@
+Fabric/Mounting/ComponentViews/LegacyViewManagerInterop/RCTLegacyViewManagerInteropCoordinatorAdapter.h

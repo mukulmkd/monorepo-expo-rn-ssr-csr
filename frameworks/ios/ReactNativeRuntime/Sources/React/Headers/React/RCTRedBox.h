@@ -1,0 +1,1 @@
+CoreModules/RCTRedBox.h
