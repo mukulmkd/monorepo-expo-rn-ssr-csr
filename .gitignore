@@ -12,9 +12,20 @@ npm-cache/
 .verdaccio/
 .vscode/
 .idea/
+# Backup zip files
+*.zip
+# Build directories
+build/
+dist-rn-runtime/
+build-rn-runtime/
 # Framework build artifacts
 frameworks/ios/**/build/
 frameworks/ios/**/dist/
 frameworks/ios/**/DerivedData/
 frameworks/ios/**/*.xcframework
 frameworks/ios/**/*.xcframework.zip
+frameworks/android/**/build/
+frameworks/android/**/dist/
+frameworks/android/**/.gradle/
+frameworks/android/**/*.aar
+frameworks/android/**/local.properties
