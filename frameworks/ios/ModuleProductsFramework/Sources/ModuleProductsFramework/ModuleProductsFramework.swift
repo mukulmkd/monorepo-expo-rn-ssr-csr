@@ -15,17 +15,11 @@ public class ModuleProductsFramework {
     public func getBundleURL() -> URL? {
         let frameworkBundle = Bundle(for: type(of: self))
         
-        print("🔍 ModuleProductsFramework: Looking for bundle...")
-        print("   Framework bundle path: \(frameworkBundle.bundlePath)")
-        print("   Framework bundle identifier: \(frameworkBundle.bundleIdentifier ?? "nil")")
-        print("   Framework bundle resource path: \(frameworkBundle.resourcePath ?? "nil")")
-        
         // Method 1: Try path(forResource:ofType:) - standard lookup
         if let bundlePath = frameworkBundle.path(
             forResource: "module-products",
             ofType: "bundle"
         ) {
-            print("   ✅ Found bundle via path(forResource:ofType:): \(bundlePath)")
             return URL(fileURLWithPath: bundlePath)
         }
         
@@ -34,25 +28,14 @@ public class ModuleProductsFramework {
             forResource: "module-products",
             withExtension: "bundle"
         ) {
-            print("   ✅ Found bundle via url(forResource:withExtension:): \(bundleURL.path)")
             return bundleURL
         }
         
         // Method 3: Check resource path directly
         if let resourcePath = frameworkBundle.resourcePath {
-            print("   Checking resource path: \(resourcePath)")
             let bundlePath = "\(resourcePath)/module-products.bundle"
             if FileManager.default.fileExists(atPath: bundlePath) {
-                print("   ✅ Found bundle in resource path: \(bundlePath)")
                 return URL(fileURLWithPath: bundlePath)
-            }
-            
-            // List all resources for debugging
-            print("   Available resources in framework bundle:")
-            if let resources = try? FileManager.default.contentsOfDirectory(atPath: resourcePath) {
-                resources.forEach { print("     - \($0)") }
-            } else {
-                print("     (could not list resources)")
             }
         }
         
@@ -62,18 +45,15 @@ public class ModuleProductsFramework {
                 forResource: "module-products",
                 withExtension: "bundle"
             ) {
-                print("   ✅ Found bundle via Bundle.module: \(bundleURL.path)")
                 return bundleURL
             }
         }
         
         // Method 5: Check main bundle (fallback)
-        print("   Checking main bundle...")
         if let mainBundlePath = Bundle.main.path(
             forResource: "module-products",
             ofType: "bundle"
         ) {
-            print("   ✅ Found bundle in main bundle: \(mainBundlePath)")
             return URL(fileURLWithPath: mainBundlePath)
         }
         
@@ -81,12 +61,10 @@ public class ModuleProductsFramework {
         if let resourcePath = Bundle.main.resourcePath {
             let bundlePath = "\(resourcePath)/module-products.bundle"
             if FileManager.default.fileExists(atPath: bundlePath) {
-                print("   ✅ Found bundle in main bundle resource path: \(bundlePath)")
                 return URL(fileURLWithPath: bundlePath)
             }
         }
         
-        print("   ❌ Bundle not found in any location")
         return nil
     }
     
@@ -107,7 +85,6 @@ public class ModuleProductsFramework {
         initialProperties: [String: Any]? = nil
     ) -> RCTRootView? {
         guard let bundleURL = getBundleURL() else {
-            print("❌ ModuleProductsFramework: Bundle not found")
             return nil
         }
         

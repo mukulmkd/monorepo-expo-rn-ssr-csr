@@ -15,6 +15,7 @@ public class ModulePDPFramework {
     public func getBundleURL() -> URL? {
         let frameworkBundle = Bundle(for: type(of: self))
         
+        // Method 1: Try path(forResource:ofType:) - standard lookup
         if let bundlePath = frameworkBundle.path(
             forResource: "module-pdp",
             ofType: "bundle"
@@ -22,12 +23,46 @@ public class ModulePDPFramework {
             return URL(fileURLWithPath: bundlePath)
         }
         
-        // Also check main bundle
+        // Method 2: Try url(forResource:withExtension:) - alternative lookup
+        if let bundleURL = frameworkBundle.url(
+            forResource: "module-pdp",
+            withExtension: "bundle"
+        ) {
+            return bundleURL
+        }
+        
+        // Method 3: Check resource path directly
+        if let resourcePath = frameworkBundle.resourcePath {
+            let bundlePath = "\(resourcePath)/module-pdp.bundle"
+            if FileManager.default.fileExists(atPath: bundlePath) {
+                return URL(fileURLWithPath: bundlePath)
+            }
+        }
+        
+        // Method 4: Try Bundle.module (SPM-specific, Swift 5.3+)
+        if #available(iOS 14.0, *) {
+            if let bundleURL = Bundle.module.url(
+                forResource: "module-pdp",
+                withExtension: "bundle"
+            ) {
+                return bundleURL
+            }
+        }
+        
+        // Method 5: Check main bundle (fallback)
         if let mainBundlePath = Bundle.main.path(
             forResource: "module-pdp",
             ofType: "bundle"
         ) {
             return URL(fileURLWithPath: mainBundlePath)
+        }
+        
+        // Method 6: Check main bundle resource path
+        if let resourcePath = Bundle.main.resourcePath {
+            let bundlePath = "\(resourcePath)/module-pdp.bundle"
+            if FileManager.default.fileExists(atPath: bundlePath) {
+                return URL(fileURLWithPath: bundlePath)
+            }
         }
         
         return nil
@@ -50,7 +85,6 @@ public class ModulePDPFramework {
         initialProperties: [String: Any]? = nil
     ) -> RCTRootView? {
         guard let bundleURL = getBundleURL() else {
-            print("❌ ModulePDPFramework: Bundle not found")
             return nil
         }
         

@@ -283,10 +283,7 @@ public class ${FRAMEWORK_NAME} {
     public func getBundleURL() -> URL? {
         let frameworkBundle = Bundle(for: type(of: self))
         
-        // SPM packages store resources in the module bundle
-        // Try multiple resource lookup methods
-        
-        // Method 1: Direct resource lookup (SPM standard)
+        // Method 1: Try path(forResource:ofType:) - standard lookup
         if let bundlePath = frameworkBundle.path(
             forResource: "module-${MODULE_NAME}",
             ofType: "bundle"
@@ -294,7 +291,7 @@ public class ${FRAMEWORK_NAME} {
             return URL(fileURLWithPath: bundlePath)
         }
         
-        // Method 2: Use url(forResource:withExtension:) - SPM's preferred method
+        // Method 2: Try url(forResource:withExtension:) - alternative lookup
         if let bundleURL = frameworkBundle.url(
             forResource: "module-${MODULE_NAME}",
             withExtension: "bundle"
@@ -302,7 +299,7 @@ public class ${FRAMEWORK_NAME} {
             return bundleURL
         }
         
-        // Method 3: Check if it's in the bundle's resource path directly
+        // Method 3: Check resource path directly
         if let resourcePath = frameworkBundle.resourcePath {
             let bundlePath = "\\(resourcePath)/module-${MODULE_NAME}.bundle"
             if FileManager.default.fileExists(atPath: bundlePath) {
@@ -310,23 +307,7 @@ public class ${FRAMEWORK_NAME} {
             }
         }
         
-        // Method 4: Check main bundle (fallback for when resources are copied to main bundle)
-        if let mainBundlePath = Bundle.main.path(
-            forResource: "module-${MODULE_NAME}",
-            ofType: "bundle"
-        ) {
-            return URL(fileURLWithPath: mainBundlePath)
-        }
-        
-        // Method 5: Check main bundle resource path
-        if let resourcePath = Bundle.main.resourcePath {
-            let bundlePath = "\\(resourcePath)/module-${MODULE_NAME}.bundle"
-            if FileManager.default.fileExists(atPath: bundlePath) {
-                return URL(fileURLWithPath: bundlePath)
-            }
-        }
-        
-        // Method 6: Try Bundle.module (Swift 5.3+ SPM resource access)
+        // Method 4: Try Bundle.module (SPM-specific, Swift 5.3+)
         if #available(iOS 14.0, *) {
             if let bundleURL = Bundle.module.url(
                 forResource: "module-${MODULE_NAME}",
@@ -336,16 +317,19 @@ public class ${FRAMEWORK_NAME} {
             }
         }
         
-        // Debug: Print available resources for troubleshooting
-        print("🔍 Debug: Framework bundle path: \\(frameworkBundle.bundlePath)")
-        print("🔍 Debug: Framework bundle identifier: \\(frameworkBundle.bundleIdentifier ?? "nil")")
-        print("🔍 Debug: Framework bundle resource path: \\(frameworkBundle.resourcePath ?? "nil")")
-        if let resourcePath = frameworkBundle.resourcePath {
-            print("🔍 Debug: Resources in framework bundle:")
-            if let resources = try? FileManager.default.contentsOfDirectory(atPath: resourcePath) {
-                resources.forEach { print("     - \\($0)") }
-            } else {
-                print("     (could not list resources)")
+        // Method 5: Check main bundle (fallback)
+        if let mainBundlePath = Bundle.main.path(
+            forResource: "module-${MODULE_NAME}",
+            ofType: "bundle"
+        ) {
+            return URL(fileURLWithPath: mainBundlePath)
+        }
+        
+        // Method 6: Check main bundle resource path
+        if let resourcePath = Bundle.main.resourcePath {
+            let bundlePath = "\\(resourcePath)/module-${MODULE_NAME}.bundle"
+            if FileManager.default.fileExists(atPath: bundlePath) {
+                return URL(fileURLWithPath: bundlePath)
             }
         }
         
@@ -369,7 +353,6 @@ public class ${FRAMEWORK_NAME} {
         initialProperties: [String: Any]? = nil
     ) -> RCTRootView? {
         guard let bundleURL = getBundleURL() else {
-            print("❌ ${FRAMEWORK_NAME}: Bundle not found")
             return nil
         }
         
@@ -588,6 +571,24 @@ echo "   3. Add this framework to Xcode:"
 echo "      File → Add Package Dependencies → Add Local..."
 echo "      Navigate to: $FRAMEWORK_DIR"
 echo "   4. Import in code: import ${FRAMEWORK_NAME}"
+echo ""
+########################################
+# Cleanup temporary build directories
+########################################
+log "Cleaning up temporary build directories..."
+
+# Remove build directory (temporary files from generation)
+if [ -d "$BUILD_DIR" ]; then
+  rm -rf "$BUILD_DIR"
+  log "  ✅ Removed build directory"
+fi
+
+# Remove dist directory (temporary distribution files)
+if [ -d "$DIST_DIR" ]; then
+  rm -rf "$DIST_DIR"
+  log "  ✅ Removed dist directory"
+fi
+
 echo ""
 echo "✅ Framework ready for distribution!"
 echo "   • React Native types automatically available via dependency"

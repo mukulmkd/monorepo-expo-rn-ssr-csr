@@ -20,12 +20,15 @@ dist-rn-runtime/
 build-rn-runtime/
 # Framework build artifacts
 frameworks/ios/**/build/
+frameworks/ios/**/.build/
 frameworks/ios/**/dist/
 frameworks/ios/**/DerivedData/
 frameworks/ios/**/*.xcframework
 frameworks/ios/**/*.xcframework.zip
+frameworks/ios/**/.swiftpm/
 frameworks/android/**/build/
 frameworks/android/**/dist/
 frameworks/android/**/.gradle/
 frameworks/android/**/*.aar
 frameworks/android/**/local.properties
+rn-runtime-source/**/local.properties
