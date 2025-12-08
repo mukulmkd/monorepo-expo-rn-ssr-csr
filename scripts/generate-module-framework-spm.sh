@@ -25,46 +25,58 @@ set -euo pipefail
 MONOREPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Module name parameter
-MODULE_NAME="${1:-}"
-if [ -z "$MODULE_NAME" ]; then
-  echo "Usage: $0 <module-name>"
-  echo "Module names: products, cart, pdp"
+########################################
+# Helpers (define early for use in validation)
+########################################
+log(){ echo -e "\n==> $*\n"; }
+err(){ echo -e "\n‼️ ERROR: $*\n" >&2; }
+warn(){ echo -e "\n⚠️  WARNING: $*\n"; }
+
+# Parse environment variables (required - no hardcoded fallbacks)
+# Usage: MODULE_NAME=<name> MODULE_PACKAGE=<package> MODULE_COMPONENT=<component> [REGISTRY_VERSION=<version>] ./script.sh
+
+if [ -z "${MODULE_NAME:-}" ] || [ -z "${MODULE_PACKAGE:-}" ] || [ -z "${MODULE_COMPONENT:-}" ]; then
+  err "Missing required environment variables!"
+  err ""
+  err "Usage:"
+  err "  MODULE_NAME=<name> MODULE_PACKAGE=<package> MODULE_COMPONENT=<component> [REGISTRY_VERSION=<version>] $0"
+  err ""
+  err "Example:"
+  err "  MODULE_NAME=products MODULE_PACKAGE=@app/module-products MODULE_COMPONENT=ModuleProducts REGISTRY_VERSION=latest $0"
+  err ""
+  err "Required variables:"
+  err "  MODULE_NAME      - Module name (e.g., 'products', 'cart', 'pdp')"
+  err "  MODULE_PACKAGE   - NPM package name (e.g., '@app/module-products')"
+  err "  MODULE_COMPONENT - React component name (e.g., 'ModuleProducts')"
+  err ""
+  err "Optional variables:"
+  err "  REGISTRY_VERSION - Version to fetch from registry (default: 'latest')"
   exit 1
 fi
 
-# Normalize module name
-case "$MODULE_NAME" in
-  products|Products|PRODUCTS)
-    MODULE_NAME="products"
-    MODULE_PACKAGE="@app/module-products"
-    MODULE_COMPONENT="ModuleProducts"
-    ;;
-  cart|Cart|CART)
-    MODULE_NAME="cart"
-    MODULE_PACKAGE="@app/module-cart"
-    MODULE_COMPONENT="ModuleCart"
-    ;;
-  pdp|PDP|Pdp)
-    MODULE_NAME="pdp"
-    MODULE_PACKAGE="@app/module-pdp"
-    MODULE_COMPONENT="ModulePDP"
-    ;;
-  *)
-    echo "Error: Unknown module name: $MODULE_NAME"
-    echo "Valid module names: products, cart, pdp"
-    exit 1
-    ;;
-esac
+# Use environment variables directly
+MODULE_NAME="${MODULE_NAME}"
+MODULE_PACKAGE="${MODULE_PACKAGE}"
+MODULE_COMPONENT="${MODULE_COMPONENT}"
+REGISTRY_VERSION="${REGISTRY_VERSION:-latest}"
+
+log "Module configuration:"
+log "  MODULE_NAME=$MODULE_NAME"
+log "  MODULE_PACKAGE=$MODULE_PACKAGE"
+log "  MODULE_COMPONENT=$MODULE_COMPONENT"
+log "  REGISTRY_VERSION=$REGISTRY_VERSION"
 
 # Configuration
 # MODULE_COMPONENT is already set in the case statement above (e.g., "ModuleProducts", "ModuleCart", "ModulePDP")
-FRAMEWORK_NAME="${MODULE_COMPONENT}Framework"  # ModuleProductsFramework, ModuleCartFramework, etc.
-FRAMEWORK_DIR="${MONOREPO_ROOT}/frameworks/ios/${FRAMEWORK_NAME}"
+# Convert module name to proper case for SPM naming
+MODULE_NAME_UPPER=$(echo "$MODULE_NAME" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')
+PACKAGE_NAME="MKDRNModule${MODULE_NAME_UPPER}SPM"  # MKDRNModuleProductsSPM, MKDRNModuleCartSPM, etc.
+FRAMEWORK_NAME="${MODULE_COMPONENT}Framework"  # ModuleProductsFramework, ModuleCartFramework, etc. (for Swift class names)
+FRAMEWORK_DIR="${MONOREPO_ROOT}/frameworks/ios/${PACKAGE_NAME}"
 BUILD_DIR="${FRAMEWORK_DIR}/build"
 DIST_DIR="${FRAMEWORK_DIR}/dist"
 # Resources should be inside Sources directory (SPM convention)
-SOURCES_DIR="${FRAMEWORK_DIR}/Sources/${FRAMEWORK_NAME}"
+SOURCES_DIR="${FRAMEWORK_DIR}/Sources/${PACKAGE_NAME}"
 RESOURCES_DIR="${SOURCES_DIR}/Resources"
 BUNDLE_FILE="${RESOURCES_DIR}/module-${MODULE_NAME}.bundle"
 
@@ -73,13 +85,6 @@ TEMP_NPM_DIR="${BUILD_DIR}/npm-env"
 
 # Verdaccio configuration
 VERDACCIO_URL="http://localhost:4873"
-
-########################################
-# Helpers
-########################################
-log(){ echo -e "\n==> $*\n"; }
-err(){ echo -e "\n‼️ ERROR: $*\n" >&2; }
-warn(){ echo -e "\n⚠️  WARNING: $*\n"; }
 
 ########################################
 # Validate environment
@@ -152,25 +157,12 @@ log "Step 1: Fetching from Verdaccio and creating bundle..."
 MONOREPO_NODE_MODULES="${MONOREPO_ROOT}/node_modules"
 MODULE_APP_DIR="${MONOREPO_ROOT}/apps/module-${MODULE_NAME}"
 
-# Check if module exists in monorepo (faster path)
-if [ -d "$MODULE_APP_DIR" ] && [ -f "${MODULE_APP_DIR}/index.js" ]; then
-  log "  Using module from monorepo (fast path - no npm install needed)..."
-  MODULE_ENTRY="${MODULE_APP_DIR}/index.js"
-  MODULE_DIR="$MODULE_APP_DIR"
-  
-  # Use monorepo's react-native directly
-  if [ ! -d "$MONOREPO_NODE_MODULES/react-native" ]; then
-    err "react-native not found in monorepo node_modules"
-    err "Please run: npm install"
-    exit 1
-  fi
-else
-  # Fallback: Install from Verdaccio (slower)
-  log "  Module not in monorepo, installing from Verdaccio..."
-  rm -rf "$TEMP_NPM_DIR"
-  mkdir -p "$TEMP_NPM_DIR"
-  
-  cat > "$TEMP_NPM_DIR/package.json" <<EOF
+# Always try Verdaccio first (primary source)
+log "  Installing module from Verdaccio..."
+rm -rf "$TEMP_NPM_DIR"
+mkdir -p "$TEMP_NPM_DIR"
+
+cat > "$TEMP_NPM_DIR/package.json" <<EOF
 {
   "name": "framework-bundle-temp",
   "version": "1.0.0",
@@ -180,26 +172,47 @@ else
   }
 }
 EOF
-  
-  cat > "$TEMP_NPM_DIR/.npmrc" <<EOF
+
+cat > "$TEMP_NPM_DIR/.npmrc" <<EOF
 @app:registry=$VERDACCIO_URL
 @pkg:registry=$VERDACCIO_URL
 registry=$VERDACCIO_URL
 EOF
+
+cd "$TEMP_NPM_DIR"
+npm install --legacy-peer-deps --no-save > /dev/null 2>&1
+
+MODULE_INSTALL_DIR="$TEMP_NPM_DIR/node_modules/@app/module-${MODULE_NAME}"
+if [ -d "$MODULE_INSTALL_DIR" ] && [ -f "${MODULE_INSTALL_DIR}/index.js" ]; then
+  # Successfully installed from Verdaccio
+  MODULE_DIR="$MODULE_INSTALL_DIR"
+  MODULE_ENTRY="${MODULE_DIR}/index.js"
+  log "  ✅ Module installed from Verdaccio: $MODULE_DIR"
+else
+  # Fallback: Use monorepo if Verdaccio installation failed
+  log "  ⚠️  Module not found in Verdaccio, falling back to monorepo..."
   
-  cd "$TEMP_NPM_DIR"
-  npm install --legacy-peer-deps --no-save > /dev/null 2>&1
-  
-  if [ ! -d "node_modules/@app/module-${MODULE_NAME}" ]; then
-    err "Failed to install $MODULE_PACKAGE from Verdaccio"
-    exit 1
-  fi
-  
-  MODULE_ENTRY="node_modules/@app/module-${MODULE_NAME}/index.js"
-  MODULE_DIR="$TEMP_NPM_DIR/node_modules/@app/module-${MODULE_NAME}"
-  
-  if [ ! -f "$MODULE_ENTRY" ]; then
-    err "Module entry point not found: $MODULE_ENTRY"
+  if [ -d "$MODULE_APP_DIR" ] && [ -f "${MODULE_APP_DIR}/index.js" ]; then
+    # Ensure absolute paths
+    MODULE_DIR="$MODULE_APP_DIR"
+    MODULE_ENTRY="${MODULE_DIR}/index.js"
+    
+    # Use monorepo's react-native directly
+    if [ ! -d "$MONOREPO_NODE_MODULES/react-native" ]; then
+      err "react-native not found in monorepo node_modules"
+      err "Please run: npm install"
+      exit 1
+    fi
+    
+    log "  ✅ Module found in monorepo (fallback): $MODULE_DIR"
+  else
+    err "Module $MODULE_PACKAGE not found in Verdaccio and not available in monorepo"
+    err "Verdaccio installation directory: $MODULE_INSTALL_DIR"
+    err "Monorepo directory: $MODULE_APP_DIR"
+    err ""
+    err "Please ensure:"
+    err "  1. Module is published to Verdaccio: npm run verdaccio:publish-all"
+    err "  2. Or module exists in monorepo: apps/module-${MODULE_NAME}/"
     exit 1
   fi
 fi
@@ -209,47 +222,163 @@ mkdir -p "$RESOURCES_DIR"
 
 # Bundle JavaScript
 log "  Bundling JavaScript for iOS..."
+
+# Verify entry file exists (should already be absolute from above)
+if [ ! -f "$MODULE_ENTRY" ]; then
+  err "Entry file not found: $MODULE_ENTRY"
+  err "Module directory: $MODULE_DIR"
+  err "Please ensure the module is properly installed or published to Verdaccio"
+  exit 1
+fi
+
+# Ensure entry file is absolute (safety check)
+if [[ "$MODULE_ENTRY" != /* ]]; then
+  err "Internal error: MODULE_ENTRY should be absolute but is relative: $MODULE_ENTRY"
+  exit 1
+fi
+
+# Ensure bundle output directory exists
+mkdir -p "$(dirname "$BUNDLE_FILE")"
+
+# Change to monorepo root for Metro bundling
 cd "$MONOREPO_ROOT"
 
-# Find Metro config (use module's config if available)
+# Find Metro config (use module's config if available, then monorepo root)
 METRO_CONFIG=""
 if [ -f "${MODULE_DIR}/metro.config.js" ]; then
   METRO_CONFIG="--config ${MODULE_DIR}/metro.config.js"
+  log "  Using Metro config: ${MODULE_DIR}/metro.config.js"
 elif [ -f "${MONOREPO_ROOT}/metro.config.js" ]; then
   METRO_CONFIG="--config ${MONOREPO_ROOT}/metro.config.js"
+  log "  Using Metro config: ${MONOREPO_ROOT}/metro.config.js"
+else
+  warn "No Metro config found, using default Metro configuration"
 fi
 
-# Use monorepo's react-native bundle command directly (faster than npx)
+# Use react-native CLI - check for required dependencies
+# React Native CLI requires @react-native-community/cli and @react-native/metro-config
 REACT_NATIVE_CLI="${MONOREPO_NODE_MODULES}/.bin/react-native"
+REACT_NATIVE_CLI_PKG="${MONOREPO_NODE_MODULES}/@react-native-community/cli"
+REACT_NATIVE_METRO_CONFIG="${MONOREPO_NODE_MODULES}/@react-native/metro-config"
+
+# Check and install missing dependencies
+MISSING_DEPS=()
 if [ ! -f "$REACT_NATIVE_CLI" ]; then
-  # Fallback to npx if not found
-  REACT_NATIVE_CLI="npx --yes react-native"
+  MISSING_DEPS+=("react-native")
+fi
+if [ ! -d "$REACT_NATIVE_CLI_PKG" ]; then
+  MISSING_DEPS+=("@react-native-community/cli")
+fi
+if [ ! -d "$REACT_NATIVE_METRO_CONFIG" ]; then
+  MISSING_DEPS+=("@react-native/metro-config")
 fi
 
-log "  Using entry point: $MODULE_ENTRY"
+if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+  warn "  Missing React Native CLI dependencies: ${MISSING_DEPS[*]}"
+  warn "  Note: These are optional peer dependencies of react-native"
+  warn "  They may not be installed on all machines (depends on npm version/package manager)"
+  warn "  Attempting to install missing dependencies..."
+  cd "$MONOREPO_ROOT"
+  
+  # Install missing dependencies
+  for dep in "${MISSING_DEPS[@]}"; do
+    if [ "$dep" = "react-native" ]; then
+      npm install --save-dev react-native@latest --legacy-peer-deps > /dev/null 2>&1 || true
+    else
+      npm install --save-dev "$dep@latest" --legacy-peer-deps > /dev/null 2>&1 || true
+    fi
+  done
+  
+  # Verify installations
+  ALL_INSTALLED=true
+  for dep in "${MISSING_DEPS[@]}"; do
+    if [ "$dep" = "react-native" ] && [ ! -f "$REACT_NATIVE_CLI" ]; then
+      ALL_INSTALLED=false
+    elif [ "$dep" = "@react-native-community/cli" ] && [ ! -d "$REACT_NATIVE_CLI_PKG" ]; then
+      ALL_INSTALLED=false
+    elif [ "$dep" = "@react-native/metro-config" ] && [ ! -d "$REACT_NATIVE_METRO_CONFIG" ]; then
+      ALL_INSTALLED=false
+    fi
+  done
+  
+  if [ "$ALL_INSTALLED" = true ]; then
+    log "  ✅ All React Native CLI dependencies installed successfully"
+  else
+    warn "  Some dependencies could not be installed automatically"
+    warn "  The script will continue, but bundling may fail"
+    warn "  Please install manually: npm install --save-dev ${MISSING_DEPS[*]}"
+  fi
+fi
+
+# Always use npx to ensure proper dependency resolution
+REACT_NATIVE_CLI="npx --yes react-native"
+log "  Using npx react-native (ensures proper dependency resolution)"
+
+log "  Entry point: $MODULE_ENTRY"
+log "  Bundle output: $BUNDLE_FILE"
+log "  Assets destination: $RESOURCES_DIR"
 
 # Bundle with optimizations:
 # - No --reset-cache: Uses Metro cache (much faster on subsequent runs)
 # - Uses monorepo's node_modules for faster resolution
-# - Reduced output for speed
 log "  Bundling (this may take a minute, Metro cache will speed up subsequent runs)..."
-$REACT_NATIVE_CLI bundle \
+
+# Run bundle command and capture both stdout and stderr
+# Temporarily disable exit on error to capture exit code and output
+set +e  # Temporarily disable exit on error to capture exit code
+BUNDLE_OUTPUT=$($REACT_NATIVE_CLI bundle \
   --platform ios \
   --entry-file "$MODULE_ENTRY" \
   --bundle-output "$BUNDLE_FILE" \
   --assets-dest "$RESOURCES_DIR" \
   --dev false \
   --minify true \
-  $METRO_CONFIG 2>&1 | grep -E "(error|Bundling|bundle)" || true
+  $METRO_CONFIG 2>&1)
 
+BUNDLE_EXIT_CODE=$?
+set -e  # Re-enable exit on error
+
+# Show a summary of Metro output (last 10 lines) for visibility
+if [ -n "$BUNDLE_OUTPUT" ]; then
+  echo ""
+  echo "Metro bundler output (last 10 lines):"
+  echo "$BUNDLE_OUTPUT" | tail -n 10 | sed 's/^/  /'
+  echo ""
+fi
+
+# Check if bundle was created
 if [ ! -f "$BUNDLE_FILE" ]; then
   err "Bundle was not created: $BUNDLE_FILE"
-  err "Check Metro bundler output above for errors"
+  err "Metro bundler exit code: $BUNDLE_EXIT_CODE"
+  err ""
+  err "Full Metro bundler output:"
+  echo "$BUNDLE_OUTPUT" | sed 's/^/  /'
+  err ""
+  err "Troubleshooting:"
+  err "  1. Verify entry file exists: $MODULE_ENTRY"
+  err "  2. Check Metro config: ${METRO_CONFIG:-"default"}"
+  err "  3. Ensure react-native is installed: npm install"
+  err "  4. Try running Metro manually to see detailed errors"
   exit 1
 fi
 
-BUNDLE_SIZE=$(du -h "$BUNDLE_FILE" | cut -f1)
-log "  ✅ Bundle created: $BUNDLE_FILE ($BUNDLE_SIZE)"
+# Check for errors in output even if bundle was created
+if echo "$BUNDLE_OUTPUT" | grep -qiE "error|failed|cannot|unable"; then
+  warn "Metro bundler reported warnings/errors (but bundle was created):"
+  echo "$BUNDLE_OUTPUT" | grep -iE "error|failed|cannot|unable" | sed 's/^/  /' || true
+fi
+
+# Verify bundle is not empty
+BUNDLE_SIZE=$(stat -f%z "$BUNDLE_FILE" 2>/dev/null || stat -c%s "$BUNDLE_FILE" 2>/dev/null || echo "0")
+if [ "$BUNDLE_SIZE" -eq 0 ]; then
+  err "Bundle file is empty: $BUNDLE_FILE"
+  err "Metro bundler output:"
+  echo "$BUNDLE_OUTPUT" | sed 's/^/  /'
+  exit 1
+fi
+
+BUNDLE_SIZE_HUMAN=$(du -h "$BUNDLE_FILE" | cut -f1)
+log "  ✅ Bundle created: $BUNDLE_FILE ($BUNDLE_SIZE_HUMAN)"
 
 # Cleanup temp npm environment if used
 if [ -d "$TEMP_NPM_DIR" ]; then
@@ -268,8 +397,8 @@ mkdir -p "${SOURCES_DIR}/include"
 cat > "${SOURCES_DIR}/${FRAMEWORK_NAME}.swift" <<EOF
 import UIKit
 import React
-// React Native types are provided by ReactNativeRuntime SPM package
-// The consuming app must add ReactNativeRuntime as a dependency
+// React Native types are provided by MKDReactNativeRuntime SPM package
+// The consuming app must add MKDReactNativeRuntime as a dependency
 
 public class ${FRAMEWORK_NAME} {
     public static let shared = ${FRAMEWORK_NAME}()
@@ -281,9 +410,33 @@ public class ${FRAMEWORK_NAME} {
     /// Gets the bundle URL for the ${MODULE_COMPONENT} module
     /// - Returns: The URL to the module-${MODULE_NAME}.bundle file
     public func getBundleURL() -> URL? {
-        let frameworkBundle = Bundle(for: type(of: self))
+        // Method 1: Try Bundle.module FIRST (SPM-specific, primary method for Swift Package Manager)
+        // Bundle.module is the correct way to access resources in SPM packages
+        if let bundleURL = Bundle.module.url(
+            forResource: "module-${MODULE_NAME}",
+            withExtension: "bundle"
+        ) {
+            return bundleURL
+        }
         
-        // Method 1: Try path(forResource:ofType:) - standard lookup
+        // Method 2: Try Bundle.module with path lookup
+        if let bundlePath = Bundle.module.path(
+            forResource: "module-${MODULE_NAME}",
+            ofType: "bundle"
+        ) {
+            return URL(fileURLWithPath: bundlePath)
+        }
+        
+        // Method 3: Check Bundle.module resource path directly
+        if let resourcePath = Bundle.module.resourcePath {
+            let bundlePath = "\\(resourcePath)/module-${MODULE_NAME}.bundle"
+            if FileManager.default.fileExists(atPath: bundlePath) {
+                return URL(fileURLWithPath: bundlePath)
+            }
+        }
+        
+        // Method 4: Try framework bundle (for non-SPM usage)
+        let frameworkBundle = Bundle(for: type(of: self))
         if let bundlePath = frameworkBundle.path(
             forResource: "module-${MODULE_NAME}",
             ofType: "bundle"
@@ -291,7 +444,7 @@ public class ${FRAMEWORK_NAME} {
             return URL(fileURLWithPath: bundlePath)
         }
         
-        // Method 2: Try url(forResource:withExtension:) - alternative lookup
+        // Method 5: Try framework bundle URL lookup
         if let bundleURL = frameworkBundle.url(
             forResource: "module-${MODULE_NAME}",
             withExtension: "bundle"
@@ -299,7 +452,7 @@ public class ${FRAMEWORK_NAME} {
             return bundleURL
         }
         
-        // Method 3: Check resource path directly
+        // Method 6: Check framework bundle resource path directly
         if let resourcePath = frameworkBundle.resourcePath {
             let bundlePath = "\\(resourcePath)/module-${MODULE_NAME}.bundle"
             if FileManager.default.fileExists(atPath: bundlePath) {
@@ -307,17 +460,7 @@ public class ${FRAMEWORK_NAME} {
             }
         }
         
-        // Method 4: Try Bundle.module (SPM-specific, Swift 5.3+)
-        if #available(iOS 14.0, *) {
-            if let bundleURL = Bundle.module.url(
-                forResource: "module-${MODULE_NAME}",
-                withExtension: "bundle"
-            ) {
-                return bundleURL
-            }
-        }
-        
-        // Method 5: Check main bundle (fallback)
+        // Method 7: Check main bundle (fallback for app-bundled resources)
         if let mainBundlePath = Bundle.main.path(
             forResource: "module-${MODULE_NAME}",
             ofType: "bundle"
@@ -325,7 +468,7 @@ public class ${FRAMEWORK_NAME} {
             return URL(fileURLWithPath: mainBundlePath)
         }
         
-        // Method 6: Check main bundle resource path
+        // Method 8: Check main bundle resource path
         if let resourcePath = Bundle.main.resourcePath {
             let bundlePath = "\\(resourcePath)/module-${MODULE_NAME}.bundle"
             if FileManager.default.fileExists(atPath: bundlePath) {
@@ -347,7 +490,7 @@ public class ${FRAMEWORK_NAME} {
     ///   - moduleName: The registered module name (default: "${MODULE_COMPONENT}")
     ///   - initialProperties: Optional initial props
     /// - Returns: A configured RCTRootView ready to be added to a view hierarchy
-    /// - Note: Requires ReactNativeRuntime SPM package to be added to the consuming app
+    /// - Note: Requires MKDReactNativeRuntime SPM package to be added to the consuming app
     public func createView(
         moduleName: String = "${MODULE_COMPONENT}",
         initialProperties: [String: Any]? = nil
@@ -431,30 +574,30 @@ cat > "${FRAMEWORK_DIR}/Package.swift" <<EOF
 import PackageDescription
 
 let package = Package(
-    name: "${FRAMEWORK_NAME}",
+    name: "${PACKAGE_NAME}",
     platforms: [
         .iOS(.v14)
     ],
     products: [
         .library(
-            name: "${FRAMEWORK_NAME}",
-            targets: ["${FRAMEWORK_NAME}"]
+            name: "${PACKAGE_NAME}",
+            targets: ["${PACKAGE_NAME}"]
         ),
     ],
     dependencies: [
         // React Native Runtime - required dependency
         // Path is relative to this package's location
-        .package(path: "../ReactNativeRuntime")
+                .package(path: "../MKDReactNativeRuntime")
     ],
     targets: [
         .target(
-            name: "${FRAMEWORK_NAME}",
+            name: "${PACKAGE_NAME}",
             dependencies: [
-                // React Native types from ReactNativeRuntime
-                .product(name: "ReactNativeRuntime", package: "ReactNativeRuntime"),
-                .product(name: "React", package: "ReactNativeRuntime")
+                // React Native types from MKDReactNativeRuntime
+                .product(name: "MKDReactNativeRuntime", package: "MKDReactNativeRuntime"),
+                .product(name: "React", package: "MKDReactNativeRuntime")
             ],
-            path: "Sources/${FRAMEWORK_NAME}",
+            path: "Sources/${PACKAGE_NAME}",
             resources: [
                 .copy("Resources/module-${MODULE_NAME}.bundle")
             ],
@@ -483,7 +626,7 @@ This framework contains:
 
 ## Prerequisites
 
-- ReactNativeRuntime SPM package must be added to the consuming app first
+- MKDReactNativeRuntime SPM package must be added to the consuming app first
 - iOS 14.0+
 - Xcode 14+
 
@@ -502,16 +645,16 @@ In Xcode:
 
 In Xcode:
 1. File → Add Package Dependencies → Add Local...
-2. Navigate to: \`frameworks/ios/${FRAMEWORK_NAME}\`
+2. Navigate to: \`frameworks/ios/${PACKAGE_NAME}\`
 3. Add to target
 
-**Note:** This framework automatically depends on ReactNativeRuntime, so Xcode will resolve it automatically if ReactNativeRuntime is already added.
+**Note:** This framework automatically depends on MKDReactNativeRuntime, so Xcode will resolve it automatically if MKDReactNativeRuntime is already added.
 
 ### 3. Use in Code
 
 \`\`\`swift
-import ${FRAMEWORK_NAME}
-// React types are automatically available via ReactNativeRuntime dependency
+import ${PACKAGE_NAME}
+// React types are automatically available via MKDReactNativeRuntime dependency
 
 // Option 1: Use convenience method (recommended)
 if let rootView = ${FRAMEWORK_NAME}.shared.createView() {
@@ -562,15 +705,15 @@ echo "   • Resources/module-${MODULE_NAME}.bundle ($BUNDLE_SIZE)"
 echo "   • README.md"
 echo ""
 echo "📝 Next steps:"
-echo "   1. Ensure ReactNativeRuntime SPM is generated first:"
+echo "   1. Ensure MKDReactNativeRuntime SPM is generated first:"
 echo "      npm run framework:ios:spm:runtime"
-echo "   2. Add ReactNativeRuntime to Xcode first:"
+echo "   2. Add MKDReactNativeRuntime to Xcode first:"
 echo "      File → Add Package Dependencies → Add Local..."
-echo "      Navigate to: frameworks/ios/ReactNativeRuntime"
+echo "      Navigate to: frameworks/ios/MKDReactNativeRuntime"
 echo "   3. Add this framework to Xcode:"
 echo "      File → Add Package Dependencies → Add Local..."
 echo "      Navigate to: $FRAMEWORK_DIR"
-echo "   4. Import in code: import ${FRAMEWORK_NAME}"
+echo "   4. Import in code: import ${PACKAGE_NAME}"
 echo ""
 ########################################
 # Cleanup temporary build directories

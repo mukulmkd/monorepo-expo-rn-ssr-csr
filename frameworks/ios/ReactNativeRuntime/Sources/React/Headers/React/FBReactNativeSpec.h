@@ -1,1 +1,0 @@
-FBReactNativeSpec/FBReactNativeSpec/FBReactNativeSpec.h

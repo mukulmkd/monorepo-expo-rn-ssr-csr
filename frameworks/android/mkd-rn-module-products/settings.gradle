@@ -1,0 +1,26 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    plugins {
+        id 'com.android.library' version '8.13.1'
+        id 'org.jetbrains.kotlin.android' version '2.1.0'
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://www.jitpack.io' }
+        // React Native dependencies come from Maven Central (no local AARs needed)
+        
+        // Note: Artifactory repository is only needed for publishing, not dependency resolution
+        // All dependencies come from Maven Central, so Artifactory is configured in build.gradle publishing block only
+    }
+}
+
+rootProject.name = 'ModuleProductsFramework'

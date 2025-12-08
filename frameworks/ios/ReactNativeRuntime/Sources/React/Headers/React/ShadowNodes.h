@@ -1,1 +1,0 @@
-FBReactNativeSpec/react/renderer/components/FBReactNativeSpec/ShadowNodes.h

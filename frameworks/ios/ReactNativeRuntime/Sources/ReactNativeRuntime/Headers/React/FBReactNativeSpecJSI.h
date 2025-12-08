@@ -1,1 +1,0 @@
-FBReactNativeSpec/FBReactNativeSpecJSI.h

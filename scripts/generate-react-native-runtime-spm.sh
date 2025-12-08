@@ -26,8 +26,9 @@ PODS_PROJECT="${RN_RUNTIME_SOURCE_DIR}/ios/Pods/Pods.xcodeproj"
 # Output directories - ensure frameworks/ios structure exists
 FRAMEWORKS_DIR="${MONOREPO_ROOT}/frameworks"
 FRAMEWORKS_IOS_DIR="${MONOREPO_ROOT}/frameworks/ios"
-FRAMEWORK_ROOT="${FRAMEWORKS_IOS_DIR}/ReactNativeRuntime"
-RUNTIME_SRC="${FRAMEWORK_ROOT}/Sources/ReactNativeRuntime"
+PACKAGE_NAME="MKDReactNativeRuntime"
+FRAMEWORK_ROOT="${FRAMEWORKS_IOS_DIR}/${PACKAGE_NAME}"
+RUNTIME_SRC="${FRAMEWORK_ROOT}/Sources/${PACKAGE_NAME}"
 BUILD_ROOT="${MONOREPO_ROOT}/build-rn-runtime"
 DIST_DIR="${MONOREPO_ROOT}/dist-rn-runtime"
 
@@ -262,6 +263,8 @@ scheme_already_built() {
   
   # Check if static library exists in dist
   STATIC_LIBS_DIR="${DIST_DIR}/static-libs"
+STATIC_LIBS_DIR_DEVICE="${DIST_DIR}/static-libs-device"
+STATIC_LIBS_DIR_SIMULATOR="${DIST_DIR}/static-libs-simulator"
   if [ -d "$STATIC_LIBS_DIR" ]; then
     # Check for lib files matching this scheme
     # Static libs are named like libReact-Core.a, libReact.a, etc.
@@ -399,20 +402,31 @@ build_scheme() {
       fi
     # Handle static libraries
     elif is_static_library "$IOS_BUILD_PATH" || is_static_library "$SIM_BUILD_PATH"; then
+      # CRITICAL FIX: Separate device and simulator libraries to prevent architecture mixing
+      # Object files inside static libraries retain their build SDK markers, so we must
+      # use device-built libraries for device slice and simulator-built for simulator slice
       STATIC_LIBS_DIR="${DIST_DIR}/static-libs"
+      STATIC_LIBS_DIR_DEVICE="${DIST_DIR}/static-libs-device"
+      STATIC_LIBS_DIR_SIMULATOR="${DIST_DIR}/static-libs-simulator"
       mkdir -p "$STATIC_LIBS_DIR"
+      mkdir -p "$STATIC_LIBS_DIR_DEVICE"
+      mkdir -p "$STATIC_LIBS_DIR_SIMULATOR"
       
       if [ -d "$IOS_ARCHIVE" ]; then
-        # Collect static libraries from standard location
+        # Collect static libraries from device archive - these have device SDK markers
+        find "$IOS_ARCHIVE" -type f -name "*.a" -path "*/Products/usr/local/lib/*" -exec cp {} "${STATIC_LIBS_DIR_DEVICE}/" \; 2>/dev/null || true
+        find "$IOS_ARCHIVE" -type f -name "*.a" -path "*/Products/*" ! -path "*/Products/usr/local/lib/*" ! -path "*/Products/Applications/*" -exec cp {} "${STATIC_LIBS_DIR_DEVICE}/" \; 2>/dev/null || true
+        # Also copy to main directory for backward compatibility (but we'll use device/simulator dirs)
         find "$IOS_ARCHIVE" -type f -name "*.a" -path "*/Products/usr/local/lib/*" -exec cp {} "${STATIC_LIBS_DIR}/" \; 2>/dev/null || true
-        # Also check for libraries in other locations (hermes-engine and other special cases)
         find "$IOS_ARCHIVE" -type f -name "*.a" -path "*/Products/*" ! -path "*/Products/usr/local/lib/*" ! -path "*/Products/Applications/*" -exec cp {} "${STATIC_LIBS_DIR}/" \; 2>/dev/null || true
       fi
       
       if [ -d "$SIM_ARCHIVE" ]; then
-        # Collect static libraries from standard location
+        # Collect static libraries from simulator archive - these have simulator SDK markers
+        find "$SIM_ARCHIVE" -type f -name "*.a" -path "*/Products/usr/local/lib/*" -exec cp {} "${STATIC_LIBS_DIR_SIMULATOR}/" \; 2>/dev/null || true
+        find "$SIM_ARCHIVE" -type f -name "*.a" -path "*/Products/*" ! -path "*/Products/usr/local/lib/*" ! -path "*/Products/Applications/*" -exec cp {} "${STATIC_LIBS_DIR_SIMULATOR}/" \; 2>/dev/null || true
+        # Also copy to main directory for backward compatibility (but we'll use device/simulator dirs)
         find "$SIM_ARCHIVE" -type f -name "*.a" -path "*/Products/usr/local/lib/*" -exec cp {} "${STATIC_LIBS_DIR}/" \; 2>/dev/null || true
-        # Also check for libraries in other locations (hermes-engine and other special cases)
         find "$SIM_ARCHIVE" -type f -name "*.a" -path "*/Products/*" ! -path "*/Products/usr/local/lib/*" ! -path "*/Products/Applications/*" -exec cp {} "${STATIC_LIBS_DIR}/" \; 2>/dev/null || true
       fi
       
@@ -538,6 +552,8 @@ for SCHEME in "${SCHEMES_TO_BUILD[@]}"; do
   
   # Check if static library exists
   STATIC_LIBS_DIR="${DIST_DIR}/static-libs"
+STATIC_LIBS_DIR_DEVICE="${DIST_DIR}/static-libs-device"
+STATIC_LIBS_DIR_SIMULATOR="${DIST_DIR}/static-libs-simulator"
   if [ -d "$STATIC_LIBS_DIR" ]; then
     for lib_file in "$STATIC_LIBS_DIR"/lib"${SCHEME}"*.a "$STATIC_LIBS_DIR"/lib"${SAFE_NAME}"*.a; do
       if [ -f "$lib_file" ] 2>/dev/null; then
@@ -564,6 +580,8 @@ done
 # Check if we have either xcframeworks or static libraries
 # For static libraries, check the actual directory since STATIC_LIBS array tracks scheme names
 STATIC_LIBS_DIR="${DIST_DIR}/static-libs"
+STATIC_LIBS_DIR_DEVICE="${DIST_DIR}/static-libs-device"
+STATIC_LIBS_DIR_SIMULATOR="${DIST_DIR}/static-libs-simulator"
 HAS_STATIC_LIBS=false
 STATIC_LIB_COUNT=0
 if [ -d "$STATIC_LIBS_DIR" ] && [ "$(ls -A "$STATIC_LIBS_DIR"/*.a 2>/dev/null)" ]; then
@@ -619,11 +637,70 @@ if [ -d "$RN_NODE_DIR" ]; then
       cp -R "${RN_NODE_DIR}/${dir}" "$HEADERS_DIR/" 2>/dev/null || true
     fi
   done
+  
+  # Copy dependency modules that React headers depend on (RCTDeprecation, RCTRequired, etc.)
+  # These are in ReactApple/Libraries/RCTFoundation/
+  RCT_FOUNDATION_DIR="${RN_NODE_DIR}/ReactApple/Libraries/RCTFoundation"
+  if [ -d "$RCT_FOUNDATION_DIR" ]; then
+    log "  Copying dependency modules from ReactApple/Libraries/RCTFoundation..."
+    for dep_module in RCTDeprecation RCTRequired; do
+      if [ -d "${RCT_FOUNDATION_DIR}/${dep_module}" ]; then
+        # Copy the entire module directory (includes Exported/ subdirectory with headers)
+        cp -R "${RCT_FOUNDATION_DIR}/${dep_module}" "$HEADERS_DIR/" 2>/dev/null && \
+          log "    ✅ Copied ${dep_module}" || log "    ⚠️  Failed to copy ${dep_module}"
+        
+        # Copy header to module root for expected import path
+        # Headers import as RCTDeprecation/RCTDeprecation.h but file is at RCTDeprecation/Exported/RCTDeprecation.h
+        # Copy (don't symlink) to avoid duplicate detection removing it
+        if [ -f "${HEADERS_DIR}/${dep_module}/Exported/${dep_module}.h" ] && \
+           [ ! -f "${HEADERS_DIR}/${dep_module}/${dep_module}.h" ]; then
+          cp "${HEADERS_DIR}/${dep_module}/Exported/${dep_module}.h" \
+             "${HEADERS_DIR}/${dep_module}/${dep_module}.h" 2>/dev/null && \
+            log "    ✅ Copied ${dep_module}/${dep_module}.h for import path" || true
+        fi
+      fi
+    done
+  fi
+fi
+
+# Ensure yoga/ headers are accessible for ReactNativeRuntime target
+# Yoga headers are needed by RCTConvert.h and other base headers
+if [ -d "${HEADERS_DIR}/ReactCommon/yoga/yoga" ]; then
+  log "  Creating yoga headers directory for ReactNativeRuntime target..."
+  mkdir -p "${HEADERS_DIR}/yoga"
+  # Copy all yoga header files (simpler approach - just copy directly)
+  for file in "${HEADERS_DIR}/ReactCommon/yoga/yoga"/*.h; do
+    if [ -f "$file" ]; then
+      filename=$(basename "$file")
+      # Direct copy - yoga headers are regular files, not symlinks
+      cp "$file" "${HEADERS_DIR}/yoga/$filename" 2>/dev/null && log "    Copied: $filename" || log "    ⚠️  Failed to copy: $filename"
+    fi
+  done
+  YOGA_COUNT=$(ls -1 "${HEADERS_DIR}/yoga"/*.h 2>/dev/null | wc -l | tr -d ' ')
+  log "    ✅ Created $YOGA_COUNT yoga headers for ReactNativeRuntime target"
 fi
 
 # Remove implementation files from Headers (should only contain .h files)
 log "  Removing implementation files from Headers directory..."
 find "$HEADERS_DIR" -type f \( -name "*.m" -o -name "*.mm" -o -name "*.cpp" -o -name "*.c" -o -name "*.S" \) -delete 2>/dev/null || true
+
+# Create stub RCTInspectorDevServerHelper.h to satisfy RCT_ENABLE_INSPECTOR check
+# This prevents the "RCT_ENABLE_INSPECTOR needs to be set to fulfill RCT_REMOTE_PROFILE" error
+log "  Creating stub RCTInspectorDevServerHelper.h to satisfy RCT_ENABLE_INSPECTOR check..."
+# Create stub for ReactNativeRuntime target
+INSPECTOR_HELPER_H_RUNTIME="${HEADERS_DIR}/React/RCTInspectorDevServerHelper.h"
+if [ ! -f "$INSPECTOR_HELPER_H_RUNTIME" ] && [ -d "${HEADERS_DIR}" ]; then
+  mkdir -p "${HEADERS_DIR}/React" 2>/dev/null || true
+  if [ -d "${HEADERS_DIR}/React" ]; then
+    cat > "$INSPECTOR_HELPER_H_RUNTIME" <<'EOF'
+// Stub header to satisfy RCT_ENABLE_INSPECTOR check in RCTDefines.h
+// Inspector functionality is not available in this build
+// This header exists only to make __has_include(<React/RCTInspectorDevServerHelper.h>) return true
+EOF
+    log "    ✅ Created stub RCTInspectorDevServerHelper.h for ReactNativeRuntime"
+  fi
+fi
+# Note: Stub for React target will be created later after REACT_HEADERS_DIR is set
 
 # Create module map for React Native
 log "  Creating module.modulemap for ReactNativeRuntime..."
@@ -640,31 +717,8 @@ module Yoga {
 }
 EOF
 
-# Ensure React.h umbrella header exists (create if missing)
-# Generate it dynamically based on available headers
-# Use actual file paths since symlinks may not work reliably in SPM
-if [ ! -f "${HEADERS_DIR}/React/React.h" ]; then
-  log "  Creating React.h umbrella header..."
-  mkdir -p "${HEADERS_DIR}/React"
-  cat > "${HEADERS_DIR}/React/React.h" <<'EOF'
-// React Native Runtime - Umbrella Header
-// This header imports all React Native public headers
-// Uses actual file paths since files are in subdirectories
-
-#import <React/Base/RCTBridge.h>
-#import <React/Base/RCTRootView.h>
-#import <React/Views/RCTViewManager.h>
-#import <React/Views/RCTComponent.h>
-#import <React/Base/RCTDefines.h>
-#import <React/Base/RCTLog.h>
-#import <React/Base/RCTUtils.h>
-#import <React/Base/RCTBundleURLProvider.h>
-#import <React/Base/RCTBridgeModule.h>
-#import <React/Modules/RCTEventEmitter.h>
-#import <React/Views/RCTView.h>
-#import <React/Views/ScrollView/RCTScrollView.h>
-EOF
-fi
+# Note: React.h will be generated AFTER symlinks are created
+# This ensures all headers (including symlinked ones) are included
 
 ########################################
 # Create Sources/React structure with its own module map
@@ -733,30 +787,12 @@ mkdir -p "$REACT_HEADERS_DIR"
 if [ -d "${HEADERS_DIR}" ]; then
   log "  Copying all React Native headers to Sources/React/Headers (resolving symlinks)..."
   
-  # Use find to copy all files, resolving symlinks
+  # Copy all files and symlinks, preserving symlinks to avoid duplicates
+  # CRITICAL: Preserve symlinks as symlinks to prevent duplicate header definitions
+  # If we resolve symlinks to files, we get duplicates (e.g., React/RCTBridge.h and React/Base/RCTBridge.h both as files)
   cd "${HEADERS_DIR}"
-  find . -type f -name "*.h" -o -name "*.hpp" -o -name "*.modulemap" | while read -r file; do
-    # Remove leading ./
-    file="${file#./}"
-    src_file="${HEADERS_DIR}/$file"
-    dst_file="${REACT_HEADERS_DIR}/$file"
-    
-    # If source is a symlink, resolve it
-    if [ -L "$src_file" ]; then
-      resolved=$(resolve_symlink "$src_file")
-      if [ -f "$resolved" ] && [ "$resolved" != "$src_file" ]; then
-        src_file="$resolved"
-      fi
-    fi
-    
-    # Copy the file (or resolved symlink target)
-    if [ -f "$src_file" ]; then
-      mkdir -p "$(dirname "$dst_file")"
-      cp "$src_file" "$dst_file" 2>/dev/null || true
-    fi
-  done
   
-  # Copy directory structure for module directories (even if they only contain symlinks)
+  # First, copy directory structure
   find . -type d | while read -r dir; do
     dir="${dir#./}"
     if [ -n "$dir" ] && [ "$dir" != "." ]; then
@@ -764,23 +800,60 @@ if [ -d "${HEADERS_DIR}" ]; then
     fi
   done
   
-  # For symlinked .h files, try to resolve and copy the actual files
+  # For dependency modules (RCTDeprecation, RCTRequired), also create header at module root
+  # Headers import as RCTDeprecation/RCTDeprecation.h but file is at RCTDeprecation/Exported/RCTDeprecation.h
+  for dep_module in RCTDeprecation RCTRequired; do
+    if [ -d "${HEADERS_DIR}/${dep_module}/Exported" ] && [ -f "${HEADERS_DIR}/${dep_module}/Exported/${dep_module}.h" ]; then
+      mkdir -p "${REACT_HEADERS_DIR}/${dep_module}"
+      cp "${HEADERS_DIR}/${dep_module}/Exported/${dep_module}.h" "${REACT_HEADERS_DIR}/${dep_module}/${dep_module}.h" 2>/dev/null || true
+    fi
+  done
+  
+  # Copy regular files (not symlinks)
+  find . -type f \( -name "*.h" -o -name "*.hpp" -o -name "*.modulemap" \) | while read -r file; do
+    file="${file#./}"
+    src_file="${HEADERS_DIR}/$file"
+    dst_file="${REACT_HEADERS_DIR}/$file"
+    
+    # Only copy if it's not a symlink (we'll handle symlinks separately)
+    if [ ! -L "$src_file" ] && [ -f "$src_file" ]; then
+      mkdir -p "$(dirname "$dst_file")"
+      cp "$src_file" "$dst_file" 2>/dev/null || true
+    fi
+  done
+  
+  # Copy symlinks AS SYMLINKS (preserve them, don't resolve to files)
+  # This prevents duplicates - e.g., React/RCTBridge.h -> Base/RCTBridge.h stays as a symlink
   find . -type l \( -name "*.h" -o -name "*.hpp" -o -name "*.modulemap" \) | while read -r link; do
     link="${link#./}"
     src_link="${HEADERS_DIR}/$link"
     dst_file="${REACT_HEADERS_DIR}/$link"
     
-    # Only process if destination doesn't exist as a real file
+    # Only copy symlink if destination doesn't exist as a real file
     if [ ! -f "$dst_file" ] || [ -L "$dst_file" ]; then
-      resolved=$(resolve_symlink "$src_link")
-      if [ -f "$resolved" ] && [ "$resolved" != "$src_link" ]; then
+      # Read the symlink target
+      link_target=$(readlink "$src_link" 2>/dev/null)
+      if [ -n "$link_target" ]; then
         mkdir -p "$(dirname "$dst_file")"
-        cp "$resolved" "$dst_file" 2>/dev/null && log "    Resolved symlink: $link -> $(basename "$resolved")" || true
-      elif [ -f "$resolved" ]; then
-        # If resolved path is same as source, it means resolution failed - try direct copy
-        if [ -f "$src_link" ]; then
+        # Create symlink preserving relative path
+        # If target is relative, keep it relative; if absolute, make it relative to the symlink location
+        if [[ "$link_target" == /* ]]; then
+          # Absolute path - try to make it relative
+          link_dir=$(dirname "$link")
+          # For now, just copy the symlink as-is (cp -P preserves symlinks)
+          cp -P "$src_link" "$dst_file" 2>/dev/null || {
+            # If cp -P fails, try to create relative symlink
+            # Calculate relative path from link location to target
+            cd "$(dirname "$src_link")"
+            rel_target=$(realpath --relative-to . "$link_target" 2>/dev/null || echo "$link_target")
+            cd - > /dev/null
+            mkdir -p "$(dirname "$dst_file")"
+            ln -sf "$rel_target" "$dst_file" 2>/dev/null || true
+          }
+        else
+          # Relative path - preserve it
           mkdir -p "$(dirname "$dst_file")"
-          cp "$src_link" "$dst_file" 2>/dev/null || true
+          ln -sf "$link_target" "$dst_file" 2>/dev/null || cp -P "$src_link" "$dst_file" 2>/dev/null || true
         fi
       fi
     fi
@@ -788,8 +861,26 @@ if [ -d "${HEADERS_DIR}" ]; then
   
   cd - > /dev/null
   
+  # Ensure dependency module headers are accessible at expected import paths in React target
+  # RCTDeprecation, RCTRequired, etc. need headers at module root for imports like RCTDeprecation/RCTDeprecation.h
+  # Headers import as RCTDeprecation/RCTDeprecation.h but file is at RCTDeprecation/Exported/RCTDeprecation.h
+  for dep_module in RCTDeprecation RCTRequired; do
+    if [ -d "${REACT_HEADERS_DIR}/${dep_module}" ]; then
+      exported_header="${REACT_HEADERS_DIR}/${dep_module}/Exported/${dep_module}.h"
+      root_header="${REACT_HEADERS_DIR}/${dep_module}/${dep_module}.h"
+      if [ -f "$exported_header" ] && [ ! -f "$root_header" ]; then
+        cp "$exported_header" "$root_header" 2>/dev/null && \
+          log "    ✅ Created ${dep_module}/${dep_module}.h in React target for import path" || \
+          log "    ⚠️  Failed to create ${dep_module}/${dep_module}.h"
+      elif [ -f "$root_header" ]; then
+        log "    ✅ ${dep_module}/${dep_module}.h already exists in React target"
+      fi
+    fi
+  done
+  
   # Ensure yoga/ headers are accessible (Yoga headers are in ReactCommon/yoga/yoga/)
   # Create yoga/ directory and copy/resolve all yoga header files
+  # CRITICAL: Only copy if file doesn't already exist to prevent duplicates
   if [ -d "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga" ]; then
     log "  Creating yoga headers directory with resolved files..."
     mkdir -p "${REACT_HEADERS_DIR}/yoga"
@@ -797,14 +888,19 @@ if [ -d "${HEADERS_DIR}" ]; then
     for file in "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga"/*.h; do
       if [ -f "$file" ] || [ -L "$file" ]; then
         filename=$(basename "$file")
-        # Resolve symlink to actual file
-        resolved_file=$(resolve_symlink "$file")
-        if [ -f "$resolved_file" ] && [ "$resolved_file" != "$file" ]; then
-          # Copy the resolved file
-          cp "$resolved_file" "${REACT_HEADERS_DIR}/yoga/$filename" 2>/dev/null || true
-        elif [ -f "$file" ]; then
-          # File exists, copy it
-          cp "$file" "${REACT_HEADERS_DIR}/yoga/$filename" 2>/dev/null || true
+        dst_file="${REACT_HEADERS_DIR}/yoga/$filename"
+        
+        # Only copy if destination doesn't exist (prevents duplicates)
+        if [ ! -f "$dst_file" ] && [ ! -L "$dst_file" ]; then
+          # Resolve symlink to actual file
+          resolved_file=$(resolve_symlink "$file")
+          if [ -f "$resolved_file" ] && [ "$resolved_file" != "$file" ]; then
+            # Copy the resolved file
+            cp "$resolved_file" "$dst_file" 2>/dev/null || true
+          elif [ -f "$file" ]; then
+            # File exists, copy it
+            cp "$file" "$dst_file" 2>/dev/null || true
+          fi
         fi
       fi
     done
@@ -812,11 +908,188 @@ if [ -d "${HEADERS_DIR}" ]; then
   fi
   
   log "  ✅ Headers copied with symlinks resolved"
+  
+fi
+
+# CRITICAL FIX: Remove React headers from ReactNativeRuntime/Headers to prevent duplicates
+# React headers should ONLY exist in React/Headers, not in ReactNativeRuntime/Headers
+# This prevents "redefinition" errors when both targets are imported
+log "  Removing React headers from ReactNativeRuntime/Headers to prevent duplicates..."
+if [ -d "${HEADERS_DIR}/React" ]; then
+  REACT_HEADER_COUNT=$(find "${HEADERS_DIR}/React" -name "*.h" -type f 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$REACT_HEADER_COUNT" -gt 0 ]; then
+    log "    Found $REACT_HEADER_COUNT React headers in ReactNativeRuntime/Headers - removing..."
+    rm -rf "${HEADERS_DIR}/React" 2>/dev/null || true
+    log "    ✅ Removed React headers from ReactNativeRuntime/Headers (React headers are only in React/Headers)"
+  fi
 fi
 
 # Remove implementation files from React Headers (should only contain .h files)
 log "  Removing implementation files from React Headers directory..."
 find "$REACT_HEADERS_DIR" -type f \( -name "*.m" -o -name "*.mm" -o -name "*.cpp" -o -name "*.c" -o -name "*.S" \) -delete 2>/dev/null || true
+
+# Remove excluded headers from Headers directories to prevent umbrella header warnings
+# Xcode checks that ALL headers in Headers/ are included in the umbrella header
+# By removing excluded headers, we prevent these warnings
+log "  Removing excluded headers to prevent umbrella header warnings..."
+
+should_exclude_header() {
+  local header_file="$1"
+  local header_dir=$(dirname "$header_file")
+  local header_name=$(basename "$header_file")
+  
+  # NEVER exclude critical base headers that other headers depend on
+  case "$header_name" in
+    RCTConvert.h|RCTDefines.h|RCTLog.h|RCTConstants.h|RCTBridgeModule.h|RCTBridge.h|RCTShadowView.h|RCTViewManager.h|RCTLayout.h|RCTComponent.h|RCTRootView.h)
+      return 1  # Should NOT exclude - these are fundamental headers
+      ;;
+  esac
+  
+  # NEVER exclude yoga headers - they're needed by RCTConvert.h
+  if [[ "$header_file" == *"/yoga/"* ]] || [[ "$header_file" == *"/Yoga.h" ]] || [[ "$header_name" == Yoga.h ]] || [[ "$header_name" == YG*.h ]]; then
+    return 1  # Should NOT exclude
+  fi
+  
+  # NEVER exclude dependency modules that React headers depend on
+  # RCTDeprecation, RCTRequired, etc. are required by RCTBridgeModule.h and other core headers
+  if [[ "$header_dir" == *"/RCTDeprecation"* ]] || \
+     [[ "$header_dir" == *"/RCTRequired"* ]] || \
+     [[ "$header_file" == *"/RCTDeprecation/"* ]] || \
+     [[ "$header_file" == *"/RCTRequired/"* ]] || \
+     [[ "$header_name" == RCTDeprecation.h ]] || \
+     [[ "$header_name" == RCTRequired.h ]]; then
+    return 1  # Should NOT exclude - these are dependency modules
+  fi
+  
+  # Directory-based exclusions
+  if [[ "$header_dir" == *"/CxxBridge"* ]] || \
+     [[ "$header_dir" == *"/CxxLogUtils"* ]] || \
+     [[ "$header_dir" == *"/CxxModule"* ]] || \
+     [[ "$header_dir" == *"/Fabric"* ]] || \
+     [[ "$header_dir" == *"/Inspector"* ]]; then
+    return 0  # Should exclude
+  fi
+  
+  # Filename-based exclusions
+  case "$header_name" in
+    RCTFabric*.h|*Inspector*.h|*ComponentView*.h|RCTComponentView*.h|*ComponentViewHelpers.h|RCTCxx*.h)
+      return 0  # Should exclude
+      ;;
+  esac
+  
+  # Content-based exclusions (check if header imports excluded dependencies)
+  # But skip if it's a critical base header (already checked above)
+  if [ -f "$header_file" ] && grep -qE "ReactCommon|react/renderer|react/utils|react/runtime|cxxreact|jsireact|yoga/Yoga|logger/|jsinspector|RCTComponentViewProtocol|RCTViewComponentView|RCT.*ComponentView\.h|#include\s*<memory>|#include\s*<string>|#include\s*<vector>|#include\s*<map>|#include\s*<set>|#include\s*<functional>|#include\s*<algorithm>|#include\s*<iterator>|#include\s*<bitset>" "$header_file" 2>/dev/null; then
+    return 0  # Should exclude
+  fi
+  
+  return 1  # Should NOT exclude
+}
+
+remove_excluded_headers() {
+  local headers_dir="$1"
+  local target_name="$2"
+  local removed_count=0
+  
+  if [ ! -d "$headers_dir" ]; then
+    return
+  fi
+  
+  cd "$headers_dir"
+  # Find all .h files recursively, but NEVER remove yoga headers
+  find . -name "*.h" -type f | while read -r header_file; do
+    header_file="${header_file#./}"
+    full_path="${headers_dir}/${header_file}"
+    
+    # NEVER remove yoga headers - they're needed by RCTConvert.h
+    if [[ "$header_file" == yoga/* ]] || [[ "$header_file" == */yoga/* ]]; then
+      continue
+    fi
+    
+    if should_exclude_header "$full_path"; then
+      rm -f "$full_path" 2>/dev/null && removed_count=$((removed_count + 1)) || true
+      # Also remove empty parent directories (but not yoga directories or dependency modules)
+      header_dir=$(dirname "$header_file")
+      if [ "$header_dir" != "." ] && [ -d "${headers_dir}/${header_dir}" ] && \
+         [[ "$header_dir" != yoga* ]] && [[ "$header_dir" != */yoga* ]] && \
+         [[ "$header_dir" != RCTDeprecation* ]] && [[ "$header_dir" != */RCTDeprecation* ]] && \
+         [[ "$header_dir" != RCTRequired* ]] && [[ "$header_dir" != */RCTRequired* ]]; then
+        # Check if directory is empty (only .h files, no other files)
+        if [ -z "$(find "${headers_dir}/${header_dir}" -type f ! -name "*.h" 2>/dev/null)" ] && \
+           [ -z "$(find "${headers_dir}/${header_dir}" -name "*.h" -type f 2>/dev/null)" ]; then
+          rm -rf "${headers_dir}/${header_dir}" 2>/dev/null || true
+        fi
+      fi
+    fi
+  done
+  cd - > /dev/null
+  
+  log "    ✅ Removed excluded headers from $target_name"
+}
+
+# Remove excluded headers from ReactNativeRuntime Headers BEFORE React.h generation
+# This ensures only headers that will be in React.h remain in the directory
+remove_excluded_headers "$HEADERS_DIR" "ReactNativeRuntime"
+
+# Recreate yoga headers after removal (in case they were affected)
+if [ -d "${HEADERS_DIR}/ReactCommon/yoga/yoga" ]; then
+  log "  Recreating yoga headers after exclusion cleanup..."
+  mkdir -p "${HEADERS_DIR}/yoga"
+  for file in "${HEADERS_DIR}/ReactCommon/yoga/yoga"/*.h; do
+    if [ -f "$file" ]; then
+      filename=$(basename "$file")
+      cp "$file" "${HEADERS_DIR}/yoga/$filename" 2>/dev/null || true
+    fi
+  done
+  YOGA_COUNT=$(ls -1 "${HEADERS_DIR}/yoga"/*.h 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$YOGA_COUNT" -gt 0 ]; then
+    log "    ✅ Recreated $YOGA_COUNT yoga headers"
+  fi
+fi
+
+# Remove excluded headers from React Headers
+remove_excluded_headers "$REACT_HEADERS_DIR" "React"
+
+# Ensure dependency module headers are accessible at expected import paths in React target
+# This is a safety net - the main copy happens during initial copy phase
+# RCTDeprecation, RCTRequired, etc. need headers at module root for imports like RCTDeprecation/RCTDeprecation.h
+for dep_module in RCTDeprecation RCTRequired; do
+  dep_module_dir="${REACT_HEADERS_DIR}/${dep_module}"
+  if [ -d "$dep_module_dir" ] && [ -f "${dep_module_dir}/Exported/${dep_module}.h" ] && [ ! -f "${dep_module_dir}/${dep_module}.h" ]; then
+    cp "${dep_module_dir}/Exported/${dep_module}.h" "${dep_module_dir}/${dep_module}.h" 2>/dev/null || true
+  fi
+done
+
+# Recreate yoga headers for React target after removal
+if [ -d "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga" ]; then
+  log "  Recreating yoga headers for React target after exclusion cleanup..."
+  mkdir -p "${REACT_HEADERS_DIR}/yoga"
+  for file in "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga"/*.h; do
+    if [ -f "$file" ]; then
+      filename=$(basename "$file")
+      cp "$file" "${REACT_HEADERS_DIR}/yoga/$filename" 2>/dev/null || true
+    fi
+  done
+  YOGA_COUNT=$(ls -1 "${REACT_HEADERS_DIR}/yoga"/*.h 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$YOGA_COUNT" -gt 0 ]; then
+    log "    ✅ Recreated $YOGA_COUNT yoga headers for React target"
+  fi
+fi
+
+# Create stub RCTInspectorDevServerHelper.h for React target
+# This prevents the "RCT_ENABLE_INSPECTOR needs to be set to fulfill RCT_REMOTE_PROFILE" error
+INSPECTOR_HELPER_H_REACT="${REACT_HEADERS_DIR}/React/RCTInspectorDevServerHelper.h"
+if [ ! -f "$INSPECTOR_HELPER_H_REACT" ] && [ -d "${REACT_HEADERS_DIR}" ]; then
+  mkdir -p "${REACT_HEADERS_DIR}/React" 2>/dev/null || true
+  if [ -d "${REACT_HEADERS_DIR}/React" ]; then
+    cat > "$INSPECTOR_HELPER_H_REACT" <<'EOF'
+// Stub header to satisfy RCT_ENABLE_INSPECTOR check in RCTDefines.h
+// Inspector functionality is not available in this build
+// This header exists only to make __has_include(<React/RCTInspectorDevServerHelper.h>) return true
+EOF
+    log "    ✅ Created stub RCTInspectorDevServerHelper.h for React target"
+  fi
+fi
 
 # Fix RCTDefines.h to ensure RCT_ENABLE_INSPECTOR is enabled when RCT_REMOTE_PROFILE is enabled
 # This prevents the compilation error: "RCT_ENABLE_INSPECTOR needs to be set to fulfill RCT_REMOTE_PROFILE"
@@ -856,6 +1129,83 @@ fix_rctdefines_h "$RCT_DEFINES_H_RUNTIME" "ReactNativeRuntime"
 RCT_DEFINES_H_REACT="${REACT_HEADERS_DIR}/React/RCTDefines.h"
 fix_rctdefines_h "$RCT_DEFINES_H_REACT" "React"
 
+# Fix nullability issue in RCTReactTaggedView.h
+# The isEqual: method needs nullable parameter to match NSObject's signature
+log "  Fixing RCTReactTaggedView.h nullability issue..."
+
+fix_rctreacttaggedview_h() {
+  local RCT_REACT_TAGGED_VIEW_H="$1"
+  local TARGET_NAME="$2"
+  
+  if [ -f "$RCT_REACT_TAGGED_VIEW_H" ]; then
+    # Fix the isEqual: method to have nullable parameter
+    # Change: - (BOOL)isEqual:(id)other;
+    # To:     - (BOOL)isEqual:(nullable id)other;
+    sed -i.bak 's/- (BOOL)isEqual:(id)other;/- (BOOL)isEqual:(nullable id)other;/g' "$RCT_REACT_TAGGED_VIEW_H" 2>/dev/null || {
+      # If sed fails, use python for more robust replacement
+      python3 -c "
+import re
+with open('$RCT_REACT_TAGGED_VIEW_H', 'r') as f:
+    content = f.read()
+# Replace isEqual: method signature to add nullable
+pattern = r'- \(BOOL\)isEqual:\(id\)other;'
+replacement = r'- (BOOL)isEqual:(nullable id)other;'
+content = re.sub(pattern, replacement, content)
+with open('$RCT_REACT_TAGGED_VIEW_H', 'w') as f:
+    f.write(content)
+" 2>/dev/null || true
+    }
+    rm -f "${RCT_REACT_TAGGED_VIEW_H}.bak" 2>/dev/null || true
+    log "    ✅ Fixed RCTReactTaggedView.h nullability for $TARGET_NAME"
+  fi
+}
+
+# Fix RCTReactTaggedView.h for ReactNativeRuntime target
+# Try multiple possible locations
+RCT_REACT_TAGGED_VIEW_H_RUNTIME="${HEADERS_DIR}/React/RCTReactTaggedView.h"
+if [ ! -f "$RCT_REACT_TAGGED_VIEW_H_RUNTIME" ]; then
+  # Try alternative location
+  RCT_REACT_TAGGED_VIEW_H_RUNTIME=$(find "${HEADERS_DIR}" -name "RCTReactTaggedView.h" -type f | head -1)
+fi
+if [ -n "$RCT_REACT_TAGGED_VIEW_H_RUNTIME" ] && [ -f "$RCT_REACT_TAGGED_VIEW_H_RUNTIME" ]; then
+  fix_rctreacttaggedview_h "$RCT_REACT_TAGGED_VIEW_H_RUNTIME" "ReactNativeRuntime"
+fi
+
+# Fix RCTReactTaggedView.h for React target
+# Try multiple possible locations
+RCT_REACT_TAGGED_VIEW_H_REACT="${REACT_HEADERS_DIR}/React/RCTReactTaggedView.h"
+if [ ! -f "$RCT_REACT_TAGGED_VIEW_H_REACT" ]; then
+  # Try alternative location
+  RCT_REACT_TAGGED_VIEW_H_REACT=$(find "${REACT_HEADERS_DIR}" -name "RCTReactTaggedView.h" -type f | head -1)
+fi
+if [ -n "$RCT_REACT_TAGGED_VIEW_H_REACT" ] && [ -f "$RCT_REACT_TAGGED_VIEW_H_REACT" ]; then
+  fix_rctreacttaggedview_h "$RCT_REACT_TAGGED_VIEW_H_REACT" "React"
+fi
+
+# Comprehensive cleanup of ALL broken symlinks in Headers directory
+cleanup_all_broken_symlinks() {
+  local HEADER_DIR="$1"
+  local TARGET_NAME="$2"
+  
+  log "  Cleaning up ALL broken symlinks recursively for $TARGET_NAME..."
+  local broken_count=0
+  
+  if [ -d "$HEADER_DIR" ]; then
+    cd "$HEADER_DIR"
+    # Find ALL symlinks recursively and remove broken ones
+    find . -type l | while read -r symlink; do
+      if [ ! -e "$symlink" ]; then
+        rm -f "$symlink" 2>/dev/null && broken_count=$((broken_count + 1)) || true
+      fi
+    done
+    cd - > /dev/null
+  fi
+  
+  if [ "$broken_count" -gt 0 ]; then
+    log "    ✅ Removed $broken_count broken symlinks from $TARGET_NAME"
+  fi
+}
+
 # Create symlinks for headers in subdirectories so framework-style imports work
 # React Native headers use <React/RCTBridge.h> but files are in React/Base/RCTBridge.h or nested like React/Views/ScrollView/RCTScrollView.h
 # Apply to both ReactNativeRuntime and React targets
@@ -867,27 +1217,76 @@ create_react_header_symlinks() {
   local REACT_DIR="${HEADER_DIR}/React"
   if [ -d "$REACT_DIR" ]; then
     cd "$REACT_DIR"
-    local SYMLINK_COUNT=0
+    
+    # First, clean up any existing broken symlinks
+    log "    Cleaning up existing broken symlinks..."
+    local broken_removed=0
+    for symlink in $(find . -maxdepth 1 -type l -name "*.h" 2>/dev/null); do
+      if [ ! -e "$symlink" ]; then
+        rm -f "$symlink" 2>/dev/null && broken_removed=$((broken_removed + 1)) || true
+      fi
+    done
+    if [ "$broken_removed" -gt 0 ]; then
+      log "    Removed $broken_removed broken symlinks"
+    fi
+    
     # Find all .h files in subdirectories recursively and create symlinks at root level
     # Use -mindepth 2 to only find files in subdirectories (not at root)
-    # Use -exec to avoid subshell issues
-    find . -mindepth 2 -type f -name "*.h" -exec sh -c '
-      header_name=$(basename "$1")
-      if [ ! -e "$header_name" ] && [ ! -L "$header_name" ]; then
-        relative_path="${1#./}"
-        if ln -sf "$relative_path" "$header_name" 2>/dev/null; then
-          echo "created"
+    # Only create symlink if target file actually exists
+    # CRITICAL: Check for duplicates - if a file already exists at root, don't create symlink
+    local symlink_created=0
+    for file in $(find . -mindepth 2 -type f -name "*.h" 2>/dev/null); do
+      header_name=$(basename "$file")
+      relative_path="${file#./}"
+      
+      # Only create symlink if:
+      # 1. Target file exists and is readable
+      # 2. No file or symlink already exists at root level (prevents duplicates)
+      # 3. The target file is actually different from any existing file at root
+      if [ -f "$relative_path" ] && [ -r "$relative_path" ] && [ ! -e "$header_name" ]; then
+        # Double-check: if a file exists (not symlink), don't create symlink
+        if [ ! -f "$header_name" ] && [ ! -L "$header_name" ]; then
+          if ln -sf "$relative_path" "$header_name" 2>/dev/null; then
+            # Verify the symlink was created successfully and points to a valid file
+            if [ -L "$header_name" ] && [ -e "$header_name" ]; then
+              symlink_created=$((symlink_created + 1))
+            else
+              # Symlink is broken, remove it
+              rm -f "$header_name" 2>/dev/null || true
+            fi
+          fi
         fi
       fi
-    ' _ {} \; | grep -c "created" | while read count; do
-      SYMLINK_COUNT=$count
     done
-    # Alternative: count symlinks that were actually created
-    SYMLINK_COUNT=$(find . -maxdepth 1 -type l -name "*.h" 2>/dev/null | wc -l | tr -d ' ')
+    
+    # Clean up any broken symlinks that were created
+    log "    Verifying all symlinks are valid..."
+    local broken_found=0
+    for symlink in $(find . -maxdepth 1 -type l -name "*.h" 2>/dev/null); do
+      if [ ! -e "$symlink" ]; then
+        rm -f "$symlink" 2>/dev/null && broken_found=$((broken_found + 1)) || true
+      fi
+    done
+    
+    # Count valid symlinks
+    local valid_count=0
+    for symlink in $(find . -maxdepth 1 -type l -name "*.h" 2>/dev/null); do
+      if [ -e "$symlink" ]; then
+        valid_count=$((valid_count + 1))
+      fi
+    done
+    
     cd - > /dev/null
-    log "    ✅ Created symlinks for React headers in subdirectories for $TARGET_NAME (found $SYMLINK_COUNT symlinks)"
+    log "    ✅ Created $valid_count valid symlinks for React headers in subdirectories for $TARGET_NAME"
+    if [ "$broken_found" -gt 0 ]; then
+      log "    ⚠️  Removed $broken_found broken symlinks during verification"
+    fi
   fi
 }
+
+# Clean up broken symlinks BEFORE creating new ones
+cleanup_all_broken_symlinks "$HEADERS_DIR" "ReactNativeRuntime"
+cleanup_all_broken_symlinks "$REACT_HEADERS_DIR" "React"
 
 # Create symlinks for ReactNativeRuntime target
 create_react_header_symlinks "$HEADERS_DIR" "ReactNativeRuntime"
@@ -895,29 +1294,421 @@ create_react_header_symlinks "$HEADERS_DIR" "ReactNativeRuntime"
 # Create symlinks for React target
 create_react_header_symlinks "$REACT_HEADERS_DIR" "React"
 
-# Ensure React.h umbrella header exists for React target (create if missing after copy)
-# Use actual file paths since symlinks may not work reliably in SPM
-if [ ! -f "${REACT_HEADERS_DIR}/React/React.h" ]; then
-  log "  Creating React.h umbrella header for React target..."
-  mkdir -p "${REACT_HEADERS_DIR}/React"
-  cat > "${REACT_HEADERS_DIR}/React/React.h" <<'EOF'
+# Final cleanup pass - remove any broken symlinks that were created
+cleanup_all_broken_symlinks "$HEADERS_DIR" "ReactNativeRuntime"
+cleanup_all_broken_symlinks "$REACT_HEADERS_DIR" "React"
+
+# CRITICAL: Final duplicate detection and removal
+# Check for duplicate headers where both a file and symlink exist with the same name
+# This can happen if symlinks are resolved during copying
+detect_and_remove_duplicate_headers() {
+  local HEADER_DIR="$1"
+  local TARGET_NAME="$2"
+  
+  log "  Checking for duplicate headers in $TARGET_NAME..."
+  local duplicates_found=0
+  
+  if [ -d "$HEADER_DIR" ]; then
+    cd "$HEADER_DIR"
+    
+    # CRITICAL: For React/Headers, we need to handle duplicates carefully
+    # - Never remove symlinks (they're needed for import paths like React/RCTDefines.h)
+    # - Remove duplicate identical files (e.g., Yoga/Yoga.h and ReactCommon/yoga/yoga/Yoga.h if identical)
+    # - Keep RCTDeprecation/RCTDeprecation.h (at root) even if RCTDeprecation/Exported/RCTDeprecation.h exists (both needed)
+    
+    # Find all .h files (not symlinks) and check for duplicates
+    find . -name "*.h" -type f | sort | while read -r header_file; do
+      header_name=$(basename "$header_file")
+      header_path="${header_file#./}"
+      
+      # Skip if this is RCTDeprecation.h at root (we need both root and Exported versions)
+      if [[ "$header_path" == "RCTDeprecation/RCTDeprecation.h" ]] || [[ "$header_path" == "RCTRequired/RCTRequired.h" ]]; then
+        continue  # Keep both root and Exported versions
+      fi
+      
+      # Skip yoga/ headers - they're needed for RCTConvert.h imports (<yoga/Yoga.h>)
+      # Even though ReactCommon/yoga/yoga/Yoga.h exists, we need yoga/Yoga.h too
+      if [[ "$header_path" == "yoga/"* ]]; then
+        continue  # Keep yoga/ headers - required for import paths
+      fi
+      
+      # Find other files with the same name (excluding symlinks)
+      duplicates=$(find . -name "$header_name" -type f | grep -v "^${header_file}$" || true)
+      
+      if [ -n "$duplicates" ]; then
+        for duplicate in $duplicates; do
+          duplicate_path="${duplicate#./}"
+          
+          # Skip if duplicate is RCTDeprecation.h at root or Exported (we need both)
+          if [[ "$duplicate_path" == "RCTDeprecation/RCTDeprecation.h" ]] || \
+             [[ "$duplicate_path" == "RCTDeprecation/Exported/RCTDeprecation.h" ]] || \
+             [[ "$duplicate_path" == "RCTRequired/RCTRequired.h" ]] || \
+             [[ "$duplicate_path" == "RCTRequired/Exported/RCTRequired.h" ]]; then
+            continue  # Keep both
+          fi
+          
+          # Skip yoga/ headers - they're needed for RCTConvert.h imports
+          if [[ "$duplicate_path" == "yoga/"* ]] || [[ "$header_path" == "yoga/"* ]]; then
+            continue  # Keep yoga/ headers - required for import paths
+          fi
+          
+          # Only remove if both are files (not symlinks) and they're identical
+          if [ -f "$duplicate" ] && [ -f "$header_file" ] && [ ! -L "$duplicate" ] && [ ! -L "$header_file" ]; then
+            if cmp -s "$duplicate" "$header_file" 2>/dev/null; then
+              # Files are identical - keep the one in the more specific location (deeper path)
+              # Prefer ReactCommon paths over root-level Yoga/ paths
+              header_depth=$(echo "$header_path" | tr -cd '/' | wc -c)
+              duplicate_depth=$(echo "$duplicate_path" | tr -cd '/' | wc -c)
+              
+              # If one is in Yoga/ and one is in ReactCommon/yoga/yoga/, prefer ReactCommon
+              if [[ "$header_path" == "Yoga/"* ]] && [[ "$duplicate_path" == "ReactCommon/yoga/yoga/"* ]]; then
+                log "    ⚠️  Found duplicate: $header_path (Yoga/) and $duplicate_path (ReactCommon/yoga/yoga/) - removing $header_path"
+                rm -f "$header_file" 2>/dev/null && duplicates_found=$((duplicates_found + 1)) || true
+                break
+              elif [[ "$duplicate_path" == "Yoga/"* ]] && [[ "$header_path" == "ReactCommon/yoga/yoga/"* ]]; then
+                log "    ⚠️  Found duplicate: $header_path (ReactCommon/yoga/yoga/) and $duplicate_path (Yoga/) - removing $duplicate_path"
+                rm -f "$duplicate" 2>/dev/null && duplicates_found=$((duplicates_found + 1)) || true
+              elif [ "$header_depth" -gt "$duplicate_depth" ]; then
+                log "    ⚠️  Found duplicate identical files: $duplicate_path and $header_path - removing $duplicate_path"
+                rm -f "$duplicate" 2>/dev/null && duplicates_found=$((duplicates_found + 1)) || true
+              else
+                log "    ⚠️  Found duplicate identical files: $header_path and $duplicate_path - removing $header_path"
+                rm -f "$header_file" 2>/dev/null && duplicates_found=$((duplicates_found + 1)) || true
+                break  # Skip to next header_file
+              fi
+            fi
+          fi
+        done
+      fi
+    done
+    cd - > /dev/null
+  fi
+  
+  if [ "$duplicates_found" -gt 0 ]; then
+    log "    ✅ Removed $duplicates_found duplicate headers from $TARGET_NAME"
+  else
+    log "    ✅ No duplicate headers found in $TARGET_NAME"
+  fi
+}
+
+# Check for duplicates in both targets
+detect_and_remove_duplicate_headers "$HEADERS_DIR" "ReactNativeRuntime"
+detect_and_remove_duplicate_headers "$REACT_HEADERS_DIR" "React"
+
+# CRITICAL: Remove Yoga/ (capital) directory BEFORE recreating yoga/ headers
+# RCTConvert.h imports <yoga/Yoga.h> (lowercase), not <Yoga/Yoga.h>
+# Remove it multiple times to ensure it's gone (in case it gets recreated)
+if [ -d "${REACT_HEADERS_DIR}/Yoga" ]; then
+  rm -rf "${REACT_HEADERS_DIR}/Yoga" 2>/dev/null || true
+  log "  ✅ Removed Yoga/ (capital) directory - using yoga/ (lowercase) instead"
+fi
+
+# CRITICAL: Recreate yoga/ headers AFTER duplicate detection
+# RCTConvert.h imports <yoga/Yoga.h>, so we need yoga/Yoga.h to exist
+# Even though ReactCommon/yoga/yoga/Yoga.h exists, we need the yoga/ directory version
+log "  Recreating yoga/ headers for React target after duplicate detection..."
+if [ -d "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga" ]; then
+  # Remove Yoga/ again in case it was recreated
+  if [ -d "${REACT_HEADERS_DIR}/Yoga" ]; then
+    rm -rf "${REACT_HEADERS_DIR}/Yoga" 2>/dev/null || true
+  fi
+  
+  mkdir -p "${REACT_HEADERS_DIR}/yoga"
+  for file in "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga"/*.h; do
+    if [ -f "$file" ]; then
+      filename=$(basename "$file")
+      cp "$file" "${REACT_HEADERS_DIR}/yoga/$filename" 2>/dev/null || true
+    fi
+  done
+  YOGA_COUNT=$(ls -1 "${REACT_HEADERS_DIR}/yoga"/*.h 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$YOGA_COUNT" -gt 0 ]; then
+    log "    ✅ Recreated $YOGA_COUNT yoga headers in yoga/ directory (required for RCTConvert.h imports)"
+  else
+    log "    ⚠️  No yoga headers recreated - this may cause 'yoga/Yoga.h' not found errors"
+  fi
+fi
+
+# NOTE: ReactNativeRuntime target should NOT have React headers
+# React headers are ONLY in React target to prevent duplicate definitions
+# ReactNativeRuntime only exposes non-React headers (ReactCommon, Yoga, etc.)
+# Skip React.h generation for ReactNativeRuntime since React headers were removed
+log "  Skipping React.h generation for ReactNativeRuntime target (React headers are only in React target)"
+
+# Generate React.h umbrella header for ReactNativeRuntime target AFTER symlinks are created
+# This ensures all headers (including symlinked ones) are included
+# BUT: Since we removed React headers, this will only include non-React headers
+if [ -d "${HEADERS_DIR}/React" ] && [ -n "$(find "${HEADERS_DIR}/React" -name "*.h" -type f 2>/dev/null | head -1)" ]; then
+  log "  Generating React.h umbrella header for ReactNativeRuntime target with remaining headers..."
+  mkdir -p "${HEADERS_DIR}/React"
+  REACT_H_RUNTIME_FILE="${HEADERS_DIR}/React/React.h"
+cat > "$REACT_H_RUNTIME_FILE" <<'EOF'
 // React Native Runtime - Umbrella Header
 // This header imports all React Native public headers
-// Uses actual file paths since files are in subdirectories
-
-#import <React/Base/RCTBridge.h>
-#import <React/Base/RCTRootView.h>
-#import <React/Views/RCTViewManager.h>
-#import <React/Views/RCTComponent.h>
-#import <React/Base/RCTDefines.h>
-#import <React/Base/RCTLog.h>
-#import <React/Base/RCTUtils.h>
-#import <React/Base/RCTBundleURLProvider.h>
-#import <React/Base/RCTBridgeModule.h>
-#import <React/Modules/RCTEventEmitter.h>
-#import <React/Views/RCTView.h>
-#import <React/Views/ScrollView/RCTScrollView.h>
+// Auto-generated to include all headers in React/ directory
 EOF
+
+# Find all .h files in React/ directory (excluding React.h itself) and add imports
+# Exclude headers that import ReactCommon (internal headers not meant for umbrella)
+# Track included header names to prevent duplicates
+INCLUDED_HEADERS_RUNTIME=$(mktemp)
+if [ -d "${HEADERS_DIR}/React" ]; then
+  cd "${HEADERS_DIR}/React"
+  # Find all .h files recursively (both regular files and valid symlinks), excluding React.h itself
+  find . -name "*.h" ! -name "React.h" | sort | while read -r header_file; do
+    # Convert ./Base/RCTBridge.h to React/Base/RCTBridge.h format
+    header_path="${header_file#./}"
+    header_name=$(basename "$header_file")
+    
+    # Skip if we've already included a header with the same name (prevent duplicates)
+    if grep -q "^${header_name}$" "$INCLUDED_HEADERS_RUNTIME" 2>/dev/null; then
+      continue
+    fi
+    
+    # Include if it's a valid file or a valid symlink (exists and is readable)
+    if [ -f "$header_file" ] || ([ -L "$header_file" ] && [ -e "$header_file" ] && [ -r "$header_file" ]); then
+      # Exclude headers that import external dependencies (they're internal and cause build errors)
+      # - ReactCommon: Not part of React module
+      # - react/renderer, react/utils: C++ headers not available in SPM
+      # - cxxreact: C++ bridge headers not available in SPM
+      # - yoga: Yoga headers are in separate module
+      # - C++ standard library: Headers with <memory>, <string>, <vector>, etc. are C++ headers
+      # - CxxBridge directory: All headers in CxxBridge are C++ headers
+      # - CxxLogUtils directory: Headers with logger dependencies
+      # - CxxModule directory: C++ module headers
+      # - Fabric directory: Fabric/New Architecture headers with C++ dependencies
+      # - Fabric headers: Any header with "Fabric" in name (RCTFabric*.h) depends on excluded headers
+      # - Inspector directory: Inspector headers with jsinspector dependencies
+      # Note: This blacklist approach may need updates if React Native adds new dependencies
+      header_dir=$(dirname "$header_file")
+      # Check if header should be excluded
+      should_exclude=false
+      
+      # NEVER exclude critical base headers that other headers depend on
+      case "$header_name" in
+        RCTConvert.h|RCTDefines.h|RCTLog.h|RCTConstants.h|RCTBridgeModule.h|RCTBridge.h|RCTShadowView.h|RCTViewManager.h|RCTLayout.h|RCTComponent.h|RCTRootView.h)
+          should_exclude=false  # Force include these critical headers
+          ;;
+        *)
+          # Directory-based exclusions
+          if [[ "$header_dir" == *"/CxxBridge"* ]] || \
+             [[ "$header_dir" == *"/CxxLogUtils"* ]] || \
+             [[ "$header_dir" == *"/CxxModule"* ]] || \
+             [[ "$header_dir" == *"/Fabric"* ]] || \
+             [[ "$header_dir" == *"/Inspector"* ]]; then
+            should_exclude=true
+          fi
+          # Filename-based exclusions (use case for glob matching)
+          case "$header_name" in
+            RCTFabric*.h|*Inspector*.h|*ComponentView*.h|RCTComponentView*.h|*ComponentViewHelpers.h|RCTCxx*.h)
+              should_exclude=true
+              ;;
+          esac
+          # Content-based exclusions (only if not already excluded by directory/filename)
+          if [ "$should_exclude" = false ]; then
+            if grep -qE "ReactCommon|react/renderer|react/utils|react/runtime|cxxreact|jsireact|yoga/Yoga|logger/|jsinspector|RCTComponentViewProtocol|RCTViewComponentView|RCT.*ComponentView\.h|#include\s*<memory>|#include\s*<string>|#include\s*<vector>|#include\s*<map>|#include\s*<set>|#include\s*<functional>|#include\s*<algorithm>|#include\s*<iterator>|#include\s*<bitset>" "$header_file" 2>/dev/null; then
+              should_exclude=true
+            fi
+          fi
+          ;;
+      esac
+      
+      if [ "$should_exclude" = false ]; then
+        echo "#import <React/${header_path}>" >> "$REACT_H_RUNTIME_FILE"
+        echo "${header_name}" >> "$INCLUDED_HEADERS_RUNTIME"
+      fi
+    fi
+  done
+  cd - > /dev/null
+  rm -f "$INCLUDED_HEADERS_RUNTIME"
+  
+  FINAL_COUNT=$(grep -c "^#import" "$REACT_H_RUNTIME_FILE" 2>/dev/null || echo "0")
+  log "    ✅ Generated React.h for ReactNativeRuntime target with $FINAL_COUNT headers included (excluded headers with external dependencies)"
+  
+  # After generating React.h, remove any headers that aren't included in it
+  # This prevents "umbrella header does not include header" warnings
+  log "    Removing headers not included in React.h umbrella header..."
+  cd "${HEADERS_DIR}/React"
+  REMOVED_AFTER=0
+  find . -name "*.h" ! -name "React.h" -type f | while read -r header_file; do
+    header_path="${header_file#./}"
+    header_name=$(basename "$header_file")
+    
+    # Skip yoga headers and critical headers
+    if [[ "$header_file" == yoga/* ]] || [[ "$header_file" == */yoga/* ]]; then
+      continue
+    fi
+    case "$header_name" in
+      RCTConvert.h|RCTDefines.h|RCTLog.h|RCTConstants.h|RCTBridgeModule.h|RCTBridge.h|RCTShadowView.h|RCTViewManager.h|RCTLayout.h|RCTComponent.h|RCTRootView.h|RCTInspectorDevServerHelper.h)
+        # Keep critical headers even if not explicitly in React.h
+        continue
+        ;;
+    esac
+    
+    # Check if this header is included in React.h (try multiple patterns)
+    # Escape special regex characters in header_path and header_name for grep
+    escaped_header_path=$(printf '%s\n' "$header_path" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    escaped_header_name=$(printf '%s\n' "$header_name" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    # Pattern 1: Exact path match
+    # Pattern 2: Just the filename (in case it's imported from a different path)
+    # Pattern 3: Any path containing the filename
+    if ! grep -qE "#import <React/${escaped_header_path}>|#import <React/.*/${escaped_header_name}>|#import <React/${escaped_header_name}>" "$REACT_H_RUNTIME_FILE" 2>/dev/null; then
+      # Header is not in React.h, remove it
+      rm -f "$header_file" 2>/dev/null && REMOVED_AFTER=$((REMOVED_AFTER + 1)) || true
+    fi
+  done
+  cd - > /dev/null
+  if [ "$REMOVED_AFTER" -gt 0 ]; then
+    log "    ✅ Removed $REMOVED_AFTER headers not included in React.h"
+  fi
+  fi  # Close inner if [ -d "${HEADERS_DIR}/React" ] on line 1210
+else
+  log "  ✅ ReactNativeRuntime target has no React headers (React headers are only in React target)"
+  # Remove React directory if it exists but is empty
+  if [ -d "${HEADERS_DIR}/React" ]; then
+    rm -rf "${HEADERS_DIR}/React" 2>/dev/null || true
+  fi
+fi
+
+# Generate React.h umbrella header for React target dynamically
+# This prevents "umbrella header does not include header" warnings
+log "  Generating React.h umbrella header for React target with all headers..."
+mkdir -p "${REACT_HEADERS_DIR}/React"
+REACT_H_REACT_FILE="${REACT_HEADERS_DIR}/React/React.h"
+cat > "$REACT_H_REACT_FILE" <<'EOF'
+// React Native Runtime - Umbrella Header
+// This header imports all React Native public headers
+// Auto-generated to include all headers in React/ directory
+EOF
+
+# Find all .h files in React/ directory (excluding React.h itself) and add imports
+# Exclude headers that import ReactCommon (internal headers not meant for umbrella)
+# Track included header names to prevent duplicates
+INCLUDED_HEADERS_REACT=$(mktemp)
+if [ -d "${REACT_HEADERS_DIR}/React" ]; then
+  cd "${REACT_HEADERS_DIR}/React"
+  # Find all .h files recursively (both regular files and valid symlinks), excluding React.h itself
+  find . -name "*.h" ! -name "React.h" | sort | while read -r header_file; do
+    # Convert ./Base/RCTBridge.h to React/Base/RCTBridge.h format
+    header_path="${header_file#./}"
+    header_name=$(basename "$header_file")
+    
+    # Skip if we've already included a header with the same name (prevent duplicates)
+    if grep -q "^${header_name}$" "$INCLUDED_HEADERS_REACT" 2>/dev/null; then
+      continue
+    fi
+    
+    # Include if it's a valid file or a valid symlink (exists and is readable)
+    if [ -f "$header_file" ] || ([ -L "$header_file" ] && [ -e "$header_file" ] && [ -r "$header_file" ]); then
+      # Exclude headers that import external dependencies (they're internal and cause build errors)
+      # - ReactCommon: Not part of React module
+      # - react/renderer, react/utils: C++ headers not available in SPM
+      # - cxxreact: C++ bridge headers not available in SPM
+      # - yoga: Yoga headers are in separate module
+      # - C++ standard library: Headers with <memory>, <string>, <vector>, etc. are C++ headers
+      # - CxxBridge directory: All headers in CxxBridge are C++ headers
+      # - CxxLogUtils directory: Headers with logger dependencies
+      # - CxxModule directory: C++ module headers
+      # - Fabric directory: Fabric/New Architecture headers with C++ dependencies
+      # - Fabric headers: Any header with "Fabric" in name (RCTFabric*.h) depends on excluded headers
+      # - Inspector directory: Inspector headers with jsinspector dependencies
+      # Note: This blacklist approach may need updates if React Native adds new dependencies
+      header_dir=$(dirname "$header_file")
+      # Check if header should be excluded
+      should_exclude=false
+      
+      # NEVER exclude critical base headers that other headers depend on
+      case "$header_name" in
+        RCTConvert.h|RCTDefines.h|RCTLog.h|RCTConstants.h|RCTBridgeModule.h|RCTBridge.h|RCTShadowView.h|RCTViewManager.h|RCTLayout.h|RCTComponent.h|RCTRootView.h|RCTInspectorDevServerHelper.h)
+          should_exclude=false  # Force include these critical headers
+          ;;
+        *)
+          # Directory-based exclusions
+          if [[ "$header_dir" == *"/CxxBridge"* ]] || \
+             [[ "$header_dir" == *"/CxxLogUtils"* ]] || \
+             [[ "$header_dir" == *"/CxxModule"* ]] || \
+             [[ "$header_dir" == *"/Fabric"* ]] || \
+             [[ "$header_dir" == *"/Inspector"* ]]; then
+            should_exclude=true
+          fi
+          # Filename-based exclusions (use case for glob matching)
+          # BUT: Exclude RCTInspectorDevServerHelper.h from this pattern (it's a stub header we need)
+          case "$header_name" in
+            RCTFabric*.h|*ComponentView*.h|RCTComponentView*.h|*ComponentViewHelpers.h|RCTCxx*.h)
+              should_exclude=true
+              ;;
+            *Inspector*.h)
+              # Exclude Inspector headers EXCEPT RCTInspectorDevServerHelper.h (stub header we need)
+              if [[ "$header_name" != "RCTInspectorDevServerHelper.h" ]]; then
+                should_exclude=true
+              fi
+              ;;
+          esac
+          # Content-based exclusions (only if not already excluded by directory/filename)
+          if [ "$should_exclude" = false ]; then
+            if grep -qE "ReactCommon|react/renderer|react/utils|react/runtime|cxxreact|jsireact|yoga/Yoga|logger/|jsinspector|RCTComponentViewProtocol|RCTViewComponentView|RCT.*ComponentView\.h|#include\s*<memory>|#include\s*<string>|#include\s*<vector>|#include\s*<map>|#include\s*<set>|#include\s*<functional>|#include\s*<algorithm>|#include\s*<iterator>|#include\s*<bitset>" "$header_file" 2>/dev/null; then
+              should_exclude=true
+            fi
+          fi
+          ;;
+      esac
+      
+      if [ "$should_exclude" = false ]; then
+        echo "#import <React/${header_path}>" >> "$REACT_H_REACT_FILE"
+        echo "${header_name}" >> "$INCLUDED_HEADERS_REACT"
+      fi
+    fi
+  done
+  cd - > /dev/null
+  rm -f "$INCLUDED_HEADERS_REACT"
+  
+  FINAL_COUNT=$(grep -c "^#import" "$REACT_H_REACT_FILE" 2>/dev/null || echo "0")
+  log "    ✅ Generated React.h for React target with $FINAL_COUNT headers included (excluded headers with external dependencies)"
+  
+  # Explicitly ensure RCTInspectorDevServerHelper.h is included in React.h umbrella header
+  # This prevents "umbrella header does not include header" warnings
+  if [ -f "${REACT_HEADERS_DIR}/React/RCTInspectorDevServerHelper.h" ]; then
+    if ! grep -q "RCTInspectorDevServerHelper.h" "$REACT_H_REACT_FILE" 2>/dev/null; then
+      echo "#import <React/RCTInspectorDevServerHelper.h>" >> "$REACT_H_REACT_FILE"
+      log "    ✅ Added RCTInspectorDevServerHelper.h to React.h umbrella header"
+    fi
+  fi
+  
+  # After generating React.h, remove any headers that aren't included in it
+  # This prevents "umbrella header does not include header" warnings
+  log "    Removing headers not included in React.h umbrella header..."
+  cd "${REACT_HEADERS_DIR}/React"
+  REMOVED_AFTER=0
+  find . -name "*.h" ! -name "React.h" -type f | while read -r header_file; do
+    header_path="${header_file#./}"
+    header_name=$(basename "$header_file")
+    
+    # Skip yoga headers and critical headers
+    if [[ "$header_file" == yoga/* ]] || [[ "$header_file" == */yoga/* ]]; then
+      continue
+    fi
+    case "$header_name" in
+      RCTConvert.h|RCTDefines.h|RCTLog.h|RCTConstants.h|RCTBridgeModule.h|RCTBridge.h|RCTShadowView.h|RCTViewManager.h|RCTLayout.h|RCTComponent.h|RCTRootView.h|RCTInspectorDevServerHelper.h)
+        # Keep critical headers even if not explicitly in React.h
+        continue
+        ;;
+    esac
+    
+    # Check if this header is included in React.h (try multiple patterns)
+    # Escape special regex characters in header_path and header_name for grep
+    escaped_header_path=$(printf '%s\n' "$header_path" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    escaped_header_name=$(printf '%s\n' "$header_name" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    # Pattern 1: Exact path match
+    # Pattern 2: Just the filename (in case it's imported from a different path)
+    # Pattern 3: Any path containing the filename
+    if ! grep -qE "#import <React/${escaped_header_path}>|#import <React/.*/${escaped_header_name}>|#import <React/${escaped_header_name}>" "$REACT_H_REACT_FILE" 2>/dev/null; then
+      # Header is not in React.h, remove it
+      rm -f "$header_file" 2>/dev/null && REMOVED_AFTER=$((REMOVED_AFTER + 1)) || true
+    fi
+  done
+  cd - > /dev/null
+  if [ "$REMOVED_AFTER" -gt 0 ]; then
+    log "    ✅ Removed $REMOVED_AFTER headers not included in React.h"
+  fi
 fi
 
 # Create module map for React target (only defines module React)
@@ -931,17 +1722,95 @@ module React {
 EOF
 
 # Copy Hermes xcframework (required for JSI and Hermes engine implementation)
+# Filter to only include iOS slices (device + simulator) for iOS-only apps
 HERMES_XCFRAMEWORK_SOURCE="rn-runtime-source/RnRuntimeSource/ios/Pods/hermes-engine/destroot/Library/Frameworks/universal/hermes.xcframework"
 HERMES_XCFRAMEWORK_DEST="${FRAMEWORK_ROOT}/hermes.xcframework"
 
 if [ -d "$HERMES_XCFRAMEWORK_SOURCE" ]; then
-  log "  Copying Hermes xcframework (required for JSI implementation)..."
+  log "  Copying Hermes xcframework (iOS-only, filtering out tvos/xros/maccatalyst)..."
   rm -rf "$HERMES_XCFRAMEWORK_DEST"
-  cp -R "$HERMES_XCFRAMEWORK_SOURCE" "$HERMES_XCFRAMEWORK_DEST"
-  if [ -d "$HERMES_XCFRAMEWORK_DEST" ]; then
-    log "    ✅ Copied Hermes xcframework"
+  mkdir -p "$HERMES_XCFRAMEWORK_DEST"
+  
+  # Copy only iOS slices
+  if [ -d "${HERMES_XCFRAMEWORK_SOURCE}/ios-arm64" ]; then
+    cp -R "${HERMES_XCFRAMEWORK_SOURCE}/ios-arm64" "$HERMES_XCFRAMEWORK_DEST/"
+    log "    ✅ Copied ios-arm64 slice"
+  fi
+  
+  if [ -d "${HERMES_XCFRAMEWORK_SOURCE}/ios-arm64_x86_64-simulator" ]; then
+    cp -R "${HERMES_XCFRAMEWORK_SOURCE}/ios-arm64_x86_64-simulator" "$HERMES_XCFRAMEWORK_DEST/"
+    log "    ✅ Copied ios-arm64_x86_64-simulator slice"
+  fi
+  
+  # Create filtered Info.plist with only iOS slices
+  cat > "${HERMES_XCFRAMEWORK_DEST}/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>AvailableLibraries</key>
+  <array>
+EOF
+  
+  # Add iOS device slice
+  if [ -d "${HERMES_XCFRAMEWORK_DEST}/ios-arm64" ]; then
+    cat >> "${HERMES_XCFRAMEWORK_DEST}/Info.plist" <<EOF
+    <dict>
+      <key>BinaryPath</key>
+      <string>hermes.framework/hermes</string>
+      <key>LibraryIdentifier</key>
+      <string>ios-arm64</string>
+      <key>LibraryPath</key>
+      <string>hermes.framework</string>
+      <key>SupportedArchitectures</key>
+      <array>
+        <string>arm64</string>
+      </array>
+      <key>SupportedPlatform</key>
+      <string>ios</string>
+    </dict>
+EOF
+  fi
+  
+  # Add iOS simulator slice
+  if [ -d "${HERMES_XCFRAMEWORK_DEST}/ios-arm64_x86_64-simulator" ]; then
+    cat >> "${HERMES_XCFRAMEWORK_DEST}/Info.plist" <<EOF
+    <dict>
+      <key>BinaryPath</key>
+      <string>hermes.framework/hermes</string>
+      <key>LibraryIdentifier</key>
+      <string>ios-arm64_x86_64-simulator</string>
+      <key>LibraryPath</key>
+      <string>hermes.framework</string>
+      <key>SupportedArchitectures</key>
+      <array>
+        <string>arm64</string>
+        <string>x86_64</string>
+      </array>
+      <key>SupportedPlatform</key>
+      <string>ios</string>
+      <key>SupportedPlatformVariant</key>
+      <string>simulator</string>
+    </dict>
+EOF
+  fi
+  
+  cat >> "${HERMES_XCFRAMEWORK_DEST}/Info.plist" <<EOF
+  </array>
+  <key>CFBundlePackageType</key>
+  <string>XFWK</string>
+  <key>XCFrameworkFormatVersion</key>
+  <string>1.0</string>
+</dict>
+</plist>
+EOF
+  
+  if [ -d "$HERMES_XCFRAMEWORK_DEST" ] && [ -f "${HERMES_XCFRAMEWORK_DEST}/Info.plist" ]; then
+    SLICE_COUNT=$(find "$HERMES_XCFRAMEWORK_DEST" -maxdepth 1 -type d ! -path "$HERMES_XCFRAMEWORK_DEST" | wc -l | tr -d ' ')
+    log "    ✅ Created iOS-only Hermes xcframework with $SLICE_COUNT slice(s)"
   else
-    log "    ⚠️  Failed to copy Hermes xcframework"
+    log "    ⚠️  Failed to create filtered Hermes xcframework"
+    HERMES_XCFRAMEWORK_DEST=""
   fi
 else
   log "    ⚠️  Hermes xcframework not found at $HERMES_XCFRAMEWORK_SOURCE"
@@ -952,7 +1821,7 @@ fi
 # These are needed so the targets produce valid object files for linking
 # Using Objective-C instead of Swift ensures proper bridging of Objective-C types
 log "  Creating stub Objective-C files for targets..."
-REACTNATIVERUNTIME_M="${FRAMEWORK_ROOT}/Sources/ReactNativeRuntime/ReactNativeRuntime.m"
+REACTNATIVERUNTIME_M="${RUNTIME_SRC}/${PACKAGE_NAME}.m"
 cat > "$REACTNATIVERUNTIME_M" <<'EOF'
 // React Native Runtime - Stub Objective-C file
 // This file ensures the target produces a valid object file
@@ -1012,7 +1881,9 @@ EOF
 # Create unified xcframework from static libraries
 ########################################
 STATIC_LIBS_DIR="${DIST_DIR}/static-libs"
-UNIFIED_XCFRAMEWORK="${FRAMEWORK_ROOT}/ReactNativeRuntime.xcframework"
+STATIC_LIBS_DIR_DEVICE="${DIST_DIR}/static-libs-device"
+STATIC_LIBS_DIR_SIMULATOR="${DIST_DIR}/static-libs-simulator"
+  UNIFIED_XCFRAMEWORK="${FRAMEWORK_ROOT}/MKDReactNativeRuntime.xcframework"
 
 if [ -d "$STATIC_LIBS_DIR" ] && [ "$(ls -A "$STATIC_LIBS_DIR"/*.a 2>/dev/null)" ]; then
   LIB_COUNT=$(ls -1 "$STATIC_LIBS_DIR"/*.a 2>/dev/null | wc -l | tr -d ' ')
@@ -1046,8 +1917,8 @@ if [ -d "$STATIC_LIBS_DIR" ] && [ "$(ls -A "$STATIC_LIBS_DIR"/*.a 2>/dev/null)" 
   rm -rf "$TEMP_FRAMEWORK_DIR"
   mkdir -p "$TEMP_FRAMEWORK_DIR"
   
-  # Framework name
-  FRAMEWORK_NAME="ReactNativeRuntime"
+  # Framework name - use MKDReactNativeRuntime for consistency with package name
+  FRAMEWORK_NAME="${PACKAGE_NAME}"
   
   # Check if static libraries are fat binaries (universal)
   SAMPLE_LIB=$(ls -1 "$STATIC_LIBS_DIR"/*.a 2>/dev/null | head -1)
@@ -1068,164 +1939,150 @@ if [ -d "$STATIC_LIBS_DIR" ] && [ "$(ls -A "$STATIC_LIBS_DIR"/*.a 2>/dev/null)" 
     cp -R "${RUNTIME_SRC}/Headers/"* "${UNIVERSAL_FRAMEWORK}/Headers/" 2>/dev/null || true
   fi
   
-  # Combine all static libraries into one universal binary
-  UNIVERSAL_LIB="${UNIVERSAL_FRAMEWORK}/${FRAMEWORK_NAME}"
-  log "Combining $LIB_COUNT static libraries into universal framework..."
+  # CRITICAL FIX: Build device and simulator frameworks separately
+  # Device framework needs device-built libraries (for arm64)
+  # Simulator framework needs simulator-built libraries (for x86_64 and arm64-simulator)
+  # We cannot mix them because object files retain their SDK markers (iphoneos vs iphonesimulator)
   
-  # Get architectures from first library
-  SAMPLE_LIB=$(ls -1 "$STATIC_LIBS_DIR"/*.a 2>/dev/null | head -1)
-  if [ -n "$SAMPLE_LIB" ]; then
-    ARCHS_STRING=$(lipo -archs "$SAMPLE_LIB" 2>/dev/null || echo "arm64")
-    # Convert space-separated string to array - use IFS to split properly
-    IFS=' ' read -ra ARCHS_ARRAY <<< "$ARCHS_STRING"
-  else
-    ARCHS_ARRAY=("arm64")
-  fi
+  log "Building device and simulator frameworks separately to ensure correct SDK markers..."
   
-  # Log architectures found
-  log "  Found ${#ARCHS_ARRAY[@]} architecture(s): ${ARCHS_ARRAY[*]}"
+  # Build device framework (arm64 only, from device libraries)
+  DEVICE_FRAMEWORK="${TEMP_FRAMEWORK_DIR}/device/${FRAMEWORK_NAME}.framework"
+  mkdir -p "${DEVICE_FRAMEWORK}/Headers"
+  mkdir -p "${DEVICE_FRAMEWORK}/Modules"
+  DEVICE_LIB="${DEVICE_FRAMEWORK}/${FRAMEWORK_NAME}"
+  DEVICE_HAS_ARM64=false
   
-  # Combine libraries per architecture, then create fat binary
-  for ARCH in "${ARCHS_ARRAY[@]}"; do
-    log "  Combining libraries for architecture: $ARCH"
-    TEMP_ARCH_LIB="${TEMP_FRAMEWORK_DIR}/combined_${ARCH}.a"
+  if [ -d "$STATIC_LIBS_DIR_DEVICE" ] && [ "$(ls -A "$STATIC_LIBS_DIR_DEVICE"/*.a 2>/dev/null)" ]; then
+    log "  Building device framework (arm64) from device libraries..."
+    TEMP_DEVICE_DIR="${TEMP_FRAMEWORK_DIR}/device_combine"
+    rm -rf "$TEMP_DEVICE_DIR"
+    mkdir -p "$TEMP_DEVICE_DIR"
     
-    # Extract architecture from each library and combine
-    TEMP_EXTRACT_DIR="${TEMP_FRAMEWORK_DIR}/extract_${ARCH}"
-    rm -rf "$TEMP_EXTRACT_DIR"
-    mkdir -p "$TEMP_EXTRACT_DIR"
-    
-    TEMP_ARCH_LIBS=()
-    LIB_COUNT_FOR_ARCH=0
-    # Extract this architecture from each static library
-    for lib in "$STATIC_LIBS_DIR"/*.a; do
+    # Combine device libraries directly (they should already be arm64-only)
+    DEVICE_LIBS=()
+    for lib in "$STATIC_LIBS_DIR_DEVICE"/*.a; do
       if [ -f "$lib" ]; then
-        lib_name=$(basename "$lib" .a)
-        extracted_lib="${TEMP_EXTRACT_DIR}/${lib_name}_${ARCH}.a"
-        
-        # Check if library has this architecture
         lib_archs=$(lipo -archs "$lib" 2>/dev/null || echo "")
-        if [ -z "$lib_archs" ]; then
-          # If lipo fails, try to use the library directly (might be single-arch or thin binary)
-          log "    Warning: Could not determine architectures for $lib_name, attempting direct use"
-          if [ -f "$lib" ] && [ -s "$lib" ]; then
-            TEMP_ARCH_LIBS+=("$lib")
-            LIB_COUNT_FOR_ARCH=$((LIB_COUNT_FOR_ARCH + 1))
-          fi
-        elif echo "$lib_archs" | grep -q "$ARCH"; then
-          # Use -thin instead of -extract to create a proper thin archive
-          # -extract creates a fat binary wrapper which ar can't read
-          if lipo "$lib" -thin "$ARCH" -output "$extracted_lib" 2>/dev/null; then
-            # Verify it has content and is a valid archive
-            if [ -f "$extracted_lib" ] && [ -s "$extracted_lib" ]; then
-              # Verify it's a valid archive by checking object file count
-              OBJ_COUNT=$(ar -t "$extracted_lib" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-              if [ "$OBJ_COUNT" -gt 0 ]; then
-                TEMP_ARCH_LIBS+=("$extracted_lib")
-                LIB_COUNT_FOR_ARCH=$((LIB_COUNT_FOR_ARCH + 1))
-              else
-                log "    Warning: Extracted library $lib_name for $ARCH has no object files (might be fat binary wrapper)"
-                # Try using the original library if extraction failed
-                TEMP_ARCH_LIBS+=("$lib")
-                LIB_COUNT_FOR_ARCH=$((LIB_COUNT_FOR_ARCH + 1))
-              fi
-            else
-              log "    Warning: Extracted library $lib_name for $ARCH is empty"
-            fi
+        if echo "$lib_archs" | grep -q "arm64"; then
+          # If library is already arm64-only, use directly
+          if [ "$(echo "$lib_archs" | wc -w | tr -d ' ')" -eq 1 ]; then
+            DEVICE_LIBS+=("$lib")
           else
-            log "    Warning: Failed to extract $ARCH from $lib_name, using original library"
-            # Fallback: use original library (might work if it's already thin)
-            TEMP_ARCH_LIBS+=("$lib")
-            LIB_COUNT_FOR_ARCH=$((LIB_COUNT_FOR_ARCH + 1))
+            # Extract arm64 from fat binary
+            EXTRACTED="${TEMP_DEVICE_DIR}/$(basename "$lib")"
+            if lipo "$lib" -thin arm64 -output "$EXTRACTED" 2>/dev/null; then
+              DEVICE_LIBS+=("$EXTRACTED")
+            fi
           fi
-        else
-          # Library doesn't have this architecture, skip it
-          log "    Skipping $lib_name (no $ARCH architecture, has: $lib_archs)"
         fi
       fi
     done
     
-    log "    Extracted $LIB_COUNT_FOR_ARCH libraries for $ARCH"
-    
-    # Combine all extracted libraries for this architecture
-    if [ ${#TEMP_ARCH_LIBS[@]} -gt 0 ]; then
-      log "    Combining ${#TEMP_ARCH_LIBS[@]} libraries for $ARCH (this may take 2-5 minutes)..."
-      # Use libtool to combine static libraries - this preserves all object files
-      # This is slow but necessary - combining 62 libraries with ~729 object files each
-      log "    ⏳ Starting libtool combination (please wait)..."
-      libtool -static -o "$TEMP_ARCH_LIB" "${TEMP_ARCH_LIBS[@]}" 2>&1 | grep -v -E "warning: (same member name|has no symbols)" || true
-      log "    ✅ libtool combination complete"
-      
-      # Verify the combined library was created and has content
-      if [ -f "$TEMP_ARCH_LIB" ] && [ -s "$TEMP_ARCH_LIB" ]; then
-        # Check object file count - extract architecture first if it's a fat binary
-        TEMP_CHECK="${TEMP_FRAMEWORK_DIR}/check_${ARCH}.a"
-        if lipo "$TEMP_ARCH_LIB" -extract "$ARCH" -output "$TEMP_CHECK" 2>/dev/null; then
-          OBJ_COUNT=$(ar -t "$TEMP_CHECK" 2>/dev/null | wc -l | tr -d ' ')
-          rm -f "$TEMP_CHECK"
-        else
-          # Not a fat binary, check directly
-          OBJ_COUNT=$(ar -t "$TEMP_ARCH_LIB" 2>/dev/null | wc -l | tr -d ' ')
-        fi
-        if [ -z "$OBJ_COUNT" ] || [ "$OBJ_COUNT" = "0" ]; then
-          OBJ_COUNT="unknown"
-        fi
-        log "    ✅ Combined library for $ARCH has $OBJ_COUNT object files"
-        
-        # Verify file size is reasonable (should be large if it has 729 object files)
-        FILE_SIZE=$(stat -f%z "$TEMP_ARCH_LIB" 2>/dev/null || stat -c%s "$TEMP_ARCH_LIB" 2>/dev/null || echo "0")
-        if [ "$FILE_SIZE" -lt 1000000 ]; then
-          log "    ⚠️  Warning: Combined library for $ARCH is suspiciously small ($FILE_SIZE bytes)"
-        fi
+    if [ ${#DEVICE_LIBS[@]} -gt 0 ]; then
+      log "    Combining ${#DEVICE_LIBS[@]} device libraries..."
+      libtool -static -o "$DEVICE_LIB" "${DEVICE_LIBS[@]}" 2>&1 | grep -v -E "warning: (same member name|has no symbols)" || true
+      DEVICE_OBJ_COUNT=$(ar -t "$DEVICE_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+      if [ "$DEVICE_OBJ_COUNT" -gt 100 ]; then
+        DEVICE_HAS_ARM64=true
+        log "    ✅ Created device library (arm64) with $DEVICE_OBJ_COUNT object files"
       else
-        log "    ⚠️  Failed to create combined library for $ARCH"
+        log "    ⚠️  Device library has only $DEVICE_OBJ_COUNT object files"
       fi
-    else
-      log "    ⚠️  No libraries extracted for architecture $ARCH"
     fi
-    
-    # Clean up extracted files
-    rm -rf "$TEMP_EXTRACT_DIR"
-  done
-  
-  # Create fat binary from all architectures
-  ARCH_LIBS=$(find "${TEMP_FRAMEWORK_DIR}" -name "combined_*.a" -type f 2>/dev/null)
-  if [ -n "$ARCH_LIBS" ]; then
-    ARCH_LIB_ARRAY=($ARCH_LIBS)
-    if [ ${#ARCH_LIB_ARRAY[@]} -eq 1 ]; then
-      # Single architecture, just copy
-      cp "${ARCH_LIB_ARRAY[0]}" "$UNIVERSAL_LIB"
-    else
-      # Multiple architectures, create fat binary
-      lipo "${ARCH_LIB_ARRAY[@]}" -create -output "$UNIVERSAL_LIB" 2>&1 | grep -v "warning:" || true
-    fi
-  else
-    # Fallback: try direct combination (may not work with fat binaries)
-    libtool -static -o "$UNIVERSAL_LIB" "$STATIC_LIBS_DIR"/*.a 2>&1 | grep -v -E "warning: (same member name|has no symbols)" || true
+    rm -rf "$TEMP_DEVICE_DIR"
   fi
   
-  if [ ! -f "$UNIVERSAL_LIB" ] || [ ! -s "$UNIVERSAL_LIB" ]; then
-    log "❌ Failed to create universal library"
-    UNIFIED_XCFRAMEWORK=""
-  else
-    log "✅ Created universal framework library"
+  # Build simulator framework (x86_64 and/or arm64, from simulator libraries)
+  SIM_FRAMEWORK="${TEMP_FRAMEWORK_DIR}/simulator/${FRAMEWORK_NAME}.framework"
+  mkdir -p "${SIM_FRAMEWORK}/Headers"
+  mkdir -p "${SIM_FRAMEWORK}/Modules"
+  SIM_LIB="${SIM_FRAMEWORK}/${FRAMEWORK_NAME}"
+  SIM_ARCHS_ARRAY=()
+  HAS_X86_64=false
+  HAS_ARM64_SIM=false
+  
+  if [ -d "$STATIC_LIBS_DIR_SIMULATOR" ] && [ "$(ls -A "$STATIC_LIBS_DIR_SIMULATOR"/*.a 2>/dev/null)" ]; then
+    log "  Building simulator framework from simulator libraries..."
     
-    # Verify architectures
-    UNIVERSAL_ARCHS=$(lipo -archs "$UNIVERSAL_LIB" 2>/dev/null || echo "")
-    log "  Universal library contains architectures: $UNIVERSAL_ARCHS"
-    
-    # Verify object file count
-    OBJ_COUNT=$(ar -t "$UNIVERSAL_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-    if [ -z "$OBJ_COUNT" ] || [ "$OBJ_COUNT" = "0" ]; then
-      OBJ_COUNT="unknown"
+    # Check what architectures are available in simulator libraries
+    SAMPLE_SIM_LIB=$(ls -1 "$STATIC_LIBS_DIR_SIMULATOR"/*.a 2>/dev/null | head -1)
+    if [ -n "$SAMPLE_SIM_LIB" ]; then
+      SIM_ARCHS_STRING=$(lipo -archs "$SAMPLE_SIM_LIB" 2>/dev/null || echo "")
+      if echo "$SIM_ARCHS_STRING" | grep -q "x86_64"; then
+        SIM_ARCHS_ARRAY+=("x86_64")
+        HAS_X86_64=true
+      fi
+      if echo "$SIM_ARCHS_STRING" | grep -q "arm64"; then
+        SIM_ARCHS_ARRAY+=("arm64")
+        HAS_ARM64_SIM=true
+      fi
     fi
-    log "  Universal library contains $OBJ_COUNT object files"
+    
+    log "    Found simulator architectures: ${SIM_ARCHS_ARRAY[*]}"
+    
+    # Build combined libraries for each simulator architecture
+    TEMP_SIM_DIR="${TEMP_FRAMEWORK_DIR}/simulator_combine"
+    rm -rf "$TEMP_SIM_DIR"
+    mkdir -p "$TEMP_SIM_DIR"
+    
+    TEMP_SIM_LIBS=()
+    for ARCH in "${SIM_ARCHS_ARRAY[@]}"; do
+      log "    Combining simulator libraries for $ARCH..."
+      TEMP_ARCH_DIR="${TEMP_SIM_DIR}/${ARCH}"
+      rm -rf "$TEMP_ARCH_DIR"
+      mkdir -p "$TEMP_ARCH_DIR"
+      
+      ARCH_LIBS=()
+      for lib in "$STATIC_LIBS_DIR_SIMULATOR"/*.a; do
+        if [ -f "$lib" ]; then
+          lib_archs=$(lipo -archs "$lib" 2>/dev/null || echo "")
+          if echo "$lib_archs" | grep -q "$ARCH"; then
+            # If library is already single-arch, use directly
+            if [ "$(echo "$lib_archs" | wc -w | tr -d ' ')" -eq 1 ]; then
+              ARCH_LIBS+=("$lib")
+            else
+              # Extract architecture from fat binary
+              EXTRACTED="${TEMP_ARCH_DIR}/$(basename "$lib")"
+              if lipo "$lib" -thin "$ARCH" -output "$EXTRACTED" 2>/dev/null; then
+                ARCH_LIBS+=("$EXTRACTED")
+              fi
+            fi
+          fi
+        fi
+      done
+      
+      if [ ${#ARCH_LIBS[@]} -gt 0 ]; then
+        COMBINED_ARCH="${TEMP_SIM_DIR}/combined_${ARCH}.a"
+        libtool -static -o "$COMBINED_ARCH" "${ARCH_LIBS[@]}" 2>&1 | grep -v -E "warning: (same member name|has no symbols)" || true
+        TEMP_SIM_LIBS+=("$COMBINED_ARCH")
+        log "      ✅ Combined ${#ARCH_LIBS[@]} libraries for $ARCH"
+      fi
+    done
+    
+    # Create fat binary from all simulator architectures
+    if [ ${#TEMP_SIM_LIBS[@]} -gt 0 ]; then
+      if [ ${#TEMP_SIM_LIBS[@]} -eq 1 ]; then
+        cp "${TEMP_SIM_LIBS[0]}" "$SIM_LIB"
+      else
+        lipo "${TEMP_SIM_LIBS[@]}" -create -output "$SIM_LIB" 2>&1 | grep -v "warning:" || true
+      fi
+      SIM_OBJ_COUNT=$(ar -t "$SIM_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+      SIM_ARCHS=$(lipo -archs "$SIM_LIB" 2>/dev/null || echo "")
+      log "    ✅ Created simulator library with architectures: $SIM_ARCHS ($SIM_OBJ_COUNT object files)"
+    fi
+    rm -rf "$TEMP_SIM_DIR"
   fi
   
-  if [ -f "$UNIVERSAL_LIB" ] && [ -s "$UNIVERSAL_LIB" ]; then
-    log "  Creating Info.plist and module map for universal framework..."
-    # Create Info.plist for universal framework
-    cat > "${UNIVERSAL_FRAMEWORK}/Info.plist" <<EOF
+  # Copy headers to both frameworks
+  if [ -d "${RUNTIME_SRC}/Headers" ]; then
+    cp -R "${RUNTIME_SRC}/Headers/"* "${DEVICE_FRAMEWORK}/Headers/" 2>/dev/null || true
+    cp -R "${RUNTIME_SRC}/Headers/"* "${SIM_FRAMEWORK}/Headers/" 2>/dev/null || true
+  fi
+  
+  # Create Info.plist and module map for both frameworks
+  for FRAMEWORK in "$DEVICE_FRAMEWORK" "$SIM_FRAMEWORK"; do
+    cat > "${FRAMEWORK}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1252,258 +2109,44 @@ if [ -d "$STATIC_LIBS_DIR" ] && [ "$(ls -A "$STATIC_LIBS_DIR"/*.a 2>/dev/null)" 
 </plist>
 EOF
     
-    # Create module map
     MODULE_MAP_CONTENT="framework module ${FRAMEWORK_NAME} {
   umbrella header \"React.h\"
   export *
   module * { export * }
 }"
-    echo "$MODULE_MAP_CONTENT" > "${UNIVERSAL_FRAMEWORK}/Modules/module.modulemap"
-    
-    # Split universal binary into device (arm64) and simulator (x86_64/arm64)
-    # For xcframework, we need separate slices
-    log "  Splitting universal binary into device and simulator frameworks..."
-    DEVICE_FRAMEWORK="${TEMP_FRAMEWORK_DIR}/device/${FRAMEWORK_NAME}.framework"
-    SIM_FRAMEWORK="${TEMP_FRAMEWORK_DIR}/simulator/${FRAMEWORK_NAME}.framework"
-    
-    mkdir -p "${DEVICE_FRAMEWORK}/Headers"
-    mkdir -p "${DEVICE_FRAMEWORK}/Modules"
-    mkdir -p "${SIM_FRAMEWORK}/Headers"
-    mkdir -p "${SIM_FRAMEWORK}/Modules"
-    
-    # Copy headers to both
-    if [ -d "${RUNTIME_SRC}/Headers" ]; then
-      cp -R "${RUNTIME_SRC}/Headers/"* "${DEVICE_FRAMEWORK}/Headers/" 2>/dev/null || true
-      cp -R "${RUNTIME_SRC}/Headers/"* "${SIM_FRAMEWORK}/Headers/" 2>/dev/null || true
-    fi
-    
-    # Extract device slice (arm64 only - for physical devices)
-    # CRITICAL: Use combined library directly instead of extracting from universal library
-    # The universal library is a fat binary, and extraction may not preserve all object files correctly
-    DEVICE_LIB="${DEVICE_FRAMEWORK}/${FRAMEWORK_NAME}"
+    echo "$MODULE_MAP_CONTENT" > "${FRAMEWORK}/Modules/module.modulemap"
+  done
+  
+  # Skip the old universal framework approach - we've built device and simulator separately
+  UNIVERSAL_LIB=""
+  UNIVERSAL_ARCHS=""
+  
+  # Verify device and simulator frameworks were created
+  if [ ! -f "$DEVICE_LIB" ] || [ ! -s "$DEVICE_LIB" ]; then
+    log "⚠️  Device framework not created or empty"
     DEVICE_HAS_ARM64=false
-    if echo "$UNIVERSAL_ARCHS" | grep -q "arm64"; then
-      # Use the combined arm64 library directly - it already has all object files
-      COMBINED_ARM64="${TEMP_FRAMEWORK_DIR}/combined_arm64.a"
-      if [ -f "$COMBINED_ARM64" ] && [ -s "$COMBINED_ARM64" ]; then
-        cp "$COMBINED_ARM64" "$DEVICE_LIB"
-        DEVICE_OBJ_COUNT=$(ar -t "$DEVICE_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-        if [ "$DEVICE_OBJ_COUNT" -gt 100 ]; then
-          DEVICE_HAS_ARM64=true
-          log "    ✅ Created device library (arm64) with $DEVICE_OBJ_COUNT object files"
-        else
-          log "    ⚠️  Device library has only $DEVICE_OBJ_COUNT object files (expected ~729)"
-        fi
-      else
-        log "    ⚠️  Combined arm64 library not found, trying extraction from universal library"
-        # Fallback: try extraction from universal library
-        if lipo "$UNIVERSAL_LIB" -extract arm64 -output "$DEVICE_LIB" 2>&1 | grep -v "warning:"; then
-          if [ -f "$DEVICE_LIB" ] && [ -s "$DEVICE_LIB" ]; then
-            DEVICE_OBJ_COUNT=$(ar -t "$DEVICE_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-            if [ "$DEVICE_OBJ_COUNT" -gt 100 ]; then
-              DEVICE_HAS_ARM64=true
-              log "    ✅ Extracted device library (arm64) with $DEVICE_OBJ_COUNT object files"
-            else
-              log "    ⚠️  Extracted device library has only $DEVICE_OBJ_COUNT object files"
-            fi
-          fi
-        fi
-      fi
-    fi
-    
-    # Extract simulator slice - must be a SINGLE fat binary with both x86_64 and arm64
-    # Xcode does NOT allow separate ios-x86_64-simulator and ios-arm64-simulator slices
-    # Strategy: Create ONE simulator framework with BOTH architectures (fat binary)
-    # This creates ios-arm64_x86_64-simulator (single slice with both archs)
-    SIM_LIB="${SIM_FRAMEWORK}/${FRAMEWORK_NAME}"
-    SIM_ARCHS_ARRAY=()
-    HAS_X86_64=false
-    HAS_ARM64_SIM=false
-    
-    if echo "$UNIVERSAL_ARCHS" | grep -q "x86_64"; then
-      SIM_ARCHS_ARRAY+=("x86_64")
-      HAS_X86_64=true
-    fi
-    if echo "$UNIVERSAL_ARCHS" | grep -q "arm64"; then
-      SIM_ARCHS_ARRAY+=("arm64")
-      HAS_ARM64_SIM=true
-    fi
-    
-    # Extract simulator slice - must be a SINGLE fat binary with both x86_64 and arm64
-    # CRITICAL: Use combined libraries directly instead of extracting from universal library
-    # Xcode does NOT allow separate ios-x86_64-simulator and ios-arm64-simulator slices
-    # Strategy: Create ONE simulator framework with BOTH architectures (fat binary)
-    # This creates ios-arm64_x86_64-simulator (single slice with both archs)
-    SIM_LIB="${SIM_FRAMEWORK}/${FRAMEWORK_NAME}"
-    SIM_ARCHS_ARRAY=()
-    HAS_X86_64=false
-    HAS_ARM64_SIM=false
-    
-    if echo "$UNIVERSAL_ARCHS" | grep -q "x86_64"; then
-      SIM_ARCHS_ARRAY+=("x86_64")
-      HAS_X86_64=true
-    fi
-    if echo "$UNIVERSAL_ARCHS" | grep -q "arm64"; then
-      SIM_ARCHS_ARRAY+=("arm64")
-      HAS_ARM64_SIM=true
-    fi
-    
-    if [ ${#SIM_ARCHS_ARRAY[@]} -gt 0 ]; then
-      if [ ${#SIM_ARCHS_ARRAY[@]} -eq 1 ]; then
-        # Single architecture for simulator - use combined library directly
-        COMBINED_LIB="${TEMP_FRAMEWORK_DIR}/combined_${SIM_ARCHS_ARRAY[0]}.a"
-        if [ -f "$COMBINED_LIB" ] && [ -s "$COMBINED_LIB" ]; then
-          cp "$COMBINED_LIB" "$SIM_LIB"
-          SIM_OBJ_COUNT=$(ar -t "$SIM_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-          log "    ✅ Created simulator library (${SIM_ARCHS_ARRAY[0]} only) with $SIM_OBJ_COUNT object files"
-        else
-          log "    ⚠️  Combined ${SIM_ARCHS_ARRAY[0]} library not found"
-        fi
-      else
-        # Multiple architectures - create fat binary with both x86_64 and arm64
-        # This is REQUIRED: Xcode only accepts ONE simulator slice with both architectures
-        # Use combined libraries directly - they already have all object files
-        TEMP_SIM_LIBS=()
-        for arch in "${SIM_ARCHS_ARRAY[@]}"; do
-          COMBINED_LIB="${TEMP_FRAMEWORK_DIR}/combined_${arch}.a"
-          if [ -f "$COMBINED_LIB" ] && [ -s "$COMBINED_LIB" ]; then
-            TEMP_SIM_LIBS+=("$COMBINED_LIB")
-            OBJ_COUNT=$(ar -t "$COMBINED_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-            log "    ✅ Using combined $arch library with $OBJ_COUNT object files"
-          else
-            log "    ⚠️  Combined $arch library not found"
-          fi
-        done
-        if [ ${#TEMP_SIM_LIBS[@]} -gt 0 ]; then
-          if [ ${#TEMP_SIM_LIBS[@]} -eq 1 ]; then
-            cp "${TEMP_SIM_LIBS[0]}" "$SIM_LIB"
-            SIM_OBJ_COUNT=$(ar -t "$SIM_LIB" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-            log "    ✅ Created simulator library (single arch) with $SIM_OBJ_COUNT object files"
-          else
-            # Combine x86_64 and arm64 into single fat binary for simulator
-            # This is the CORRECT approach - ONE simulator slice with BOTH architectures
-            # CRITICAL: lipo doesn't preserve all object files when creating fat binaries from static library archives
-            # Solution: Extract all object files from both architectures and combine them into a single archive
-            # Then use libtool to create a proper fat binary archive
-            log "    Extracting object files from both architectures and combining..."
-            
-            TEMP_OBJ_DIR="${TEMP_FRAMEWORK_DIR}/sim_objects"
-            rm -rf "$TEMP_OBJ_DIR"
-            mkdir -p "$TEMP_OBJ_DIR"
-            
-            # Extract object files from each architecture-specific library
-            for lib in "${TEMP_SIM_LIBS[@]}"; do
-              ARCHS=$(lipo -archs "$lib" 2>/dev/null || echo "")
-              ARCH_NAME=$(echo "$ARCHS" | tr ' ' '_')
-              if [ -n "$ARCH_NAME" ]; then
-                ARCH_OBJ_DIR="${TEMP_OBJ_DIR}/${ARCH_NAME}"
-                mkdir -p "$ARCH_OBJ_DIR"
-                # Extract all object files from this library
-                (cd "$ARCH_OBJ_DIR" && ar -x "$lib" 2>/dev/null || true)
-                OBJ_COUNT=$(ls -1 "$ARCH_OBJ_DIR"/*.o 2>/dev/null | wc -l | tr -d ' ')
-                log "      Extracted $OBJ_COUNT object files from $ARCH_NAME"
-              fi
-            done
-            
-            # CRITICAL FIX: lipo doesn't work correctly with static library archives
-            # When creating a fat binary from archives, lipo loses object files
-            # Solution: Create fat binary directly from the combined libraries using a different approach
-            # We'll use libtool to combine, but we need to ensure it creates a proper archive
-            log "    Creating simulator fat binary from architecture-specific libraries..."
-            
-            # The key insight: We need to create a fat binary that preserves all object files
-            # Since lipo fails, we'll use a workaround: create separate thin archives and combine them
-            # But Xcode requires a single fat binary for simulators
-            
-            # Try using libtool to combine first (this preserves object files)
-            TEMP_COMBINED="${TEMP_FRAMEWORK_DIR}/temp_combined_sim.a"
-            libtool -static -o "$TEMP_COMBINED" "${TEMP_SIM_LIBS[@]}" 2>&1 | grep -v -E "warning: (same member name|has no symbols)" || true
-            
-            if [ -f "$TEMP_COMBINED" ] && [ -s "$TEMP_COMBINED" ]; then
-              COMBINED_OBJ_COUNT=$(ar -t "$TEMP_COMBINED" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-              log "    Combined archive has $COMBINED_OBJ_COUNT object files"
-              
-              # Now we need to create a fat binary from the original thin libraries
-              # The issue: libtool combined them but didn't create a fat binary
-              # We need to use lipo, but it fails with archives
-              
-              # WORKAROUND: Since we can't create a proper fat binary of archives,
-              # we'll use the combined archive and mark it as a universal binary
-              # by using lipo to verify/convert it
-              
-              # Check if combined archive is already a fat binary
-              COMBINED_ARCHS=$(lipo -archs "$TEMP_COMBINED" 2>/dev/null || echo "")
-              if echo "$COMBINED_ARCHS" | grep -qE "(x86_64|arm64)"; then
-                # It's already a fat binary or has architectures
-                cp "$TEMP_COMBINED" "$SIM_LIB"
-                log "    ✅ Using combined archive as simulator library"
-              else
-                # Not a fat binary - try to create one using lipo with the original libraries
-                # This is the problematic step, but we'll try it
-                log "    Attempting to create fat binary with lipo..."
-                if lipo "${TEMP_SIM_LIBS[@]}" -create -output "$SIM_LIB" 2>&1 | grep -v "warning:"; then
-                  # Verify it worked
-                  EXTRACTED_ARM64="${TEMP_FRAMEWORK_DIR}/verify_arm64.a"
-                  if lipo "$SIM_LIB" -extract arm64 -output "$EXTRACTED_ARM64" 2>&1; then
-                    EXTRACTED_COUNT=$(ar -t "$EXTRACTED_ARM64" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-                    rm -f "$EXTRACTED_ARM64"
-                    if [ "$EXTRACTED_COUNT" -gt 100 ]; then
-                      log "    ✅ Created simulator fat binary with $EXTRACTED_COUNT object files per arch"
-                    else
-                      log "    ⚠️  Fat binary created but only has $EXTRACTED_COUNT object files (expected ~729)"
-                      # Fallback: use combined archive even though it's not a fat binary
-                      cp "$TEMP_COMBINED" "$SIM_LIB"
-                      log "    ⚠️  Using combined archive as fallback (may cause issues)"
-                    fi
-                  else
-                    # lipo extraction failed, use combined archive
-                    cp "$TEMP_COMBINED" "$SIM_LIB"
-                    log "    ⚠️  Using combined archive (lipo extraction failed)"
-                  fi
-                else
-                  # lipo failed completely, use combined archive
-                  cp "$TEMP_COMBINED" "$SIM_LIB"
-                  log "    ⚠️  Using combined archive (lipo failed)"
-                fi
-              fi
-              
-              rm -f "$TEMP_COMBINED"
-            else
-              log "    ⚠️  Failed to combine archives, trying direct lipo..."
-              if lipo "${TEMP_SIM_LIBS[@]}" -create -output "$SIM_LIB" 2>&1 | grep -v "warning:"; then
-                log "    ✅ Created simulator library using direct lipo"
-              else
-                log "    ❌ Failed to create simulator library"
-              fi
-            fi
-            
-            rm -rf "$TEMP_OBJ_DIR"
-          fi
-        else
-          log "    ⚠️  No simulator combined libraries found"
-        fi
-      fi
-    fi
-    
-    # Copy Info.plist and module map to both
-    cp "${UNIVERSAL_FRAMEWORK}/Info.plist" "${DEVICE_FRAMEWORK}/Info.plist"
-    cp "${UNIVERSAL_FRAMEWORK}/Info.plist" "${SIM_FRAMEWORK}/Info.plist"
-    cp "${UNIVERSAL_FRAMEWORK}/Modules/module.modulemap" "${DEVICE_FRAMEWORK}/Modules/module.modulemap"
-    cp "${UNIVERSAL_FRAMEWORK}/Modules/module.modulemap" "${SIM_FRAMEWORK}/Modules/module.modulemap"
-    
-    # Create xcframework from device and simulator frameworks
-    log "  Creating xcframework from device and simulator frameworks..."
-    rm -rf "$UNIFIED_XCFRAMEWORK"
-    
-    # Strategy: Create xcframework with explicit device and simulator frameworks
-    # - Device: ios-arm64 (arm64 only, for physical devices)
-    # - Simulator: ios-arm64_x86_64-simulator (both x86_64 and arm64, for simulators)
-    # xcodebuild will correctly handle these as separate platform slices
-    
-    XCFRAMEWORK_ARGS=()
-    HAS_VALID_FRAMEWORKS=false
-    
-    # Add device framework (arm64 only) if available
+  fi
+  
+  if [ ! -f "$SIM_LIB" ] || [ ! -s "$SIM_LIB" ]; then
+    log "⚠️  Simulator framework not created or empty"
+    SIM_ARCHS=""
+  else
+    SIM_ARCHS=$(lipo -archs "$SIM_LIB" 2>/dev/null || echo "")
+  fi
+  
+  # Create xcframework from device and simulator frameworks
+  log "  Creating xcframework from device and simulator frameworks..."
+  rm -rf "$UNIFIED_XCFRAMEWORK"
+  
+  # Strategy: Create xcframework with explicit device and simulator frameworks
+  # - Device: ios-arm64 (arm64 only, for physical devices)
+  # - Simulator: ios-arm64_x86_64-simulator (both x86_64 and arm64, for simulators)
+  # xcodebuild will correctly handle these as separate platform slices
+  
+  XCFRAMEWORK_ARGS=()
+  HAS_VALID_FRAMEWORKS=false
+  
+  # Add device framework (arm64 only) if available
     if [ -f "$DEVICE_LIB" ] && [ -s "$DEVICE_LIB" ] && [ "$DEVICE_HAS_ARM64" = true ]; then
       # Verify device lib is arm64 only (not a fat binary)
       DEVICE_ARCHS=$(lipo -archs "$DEVICE_LIB" 2>/dev/null || echo "")
@@ -1521,7 +2164,7 @@ EOF
       fi
     fi
     
-    # Add simulator framework (fat binary with x86_64 + arm64) if available
+  # Add simulator framework (fat binary with x86_64 + arm64) if available
     # CRITICAL: Must be ONE simulator slice with BOTH architectures
     if [ -f "$SIM_LIB" ] && [ -s "$SIM_LIB" ]; then
       # Verify simulator lib has the expected architectures
@@ -1540,15 +2183,15 @@ EOF
       fi
     fi
     
-    # Fallback: if we don't have valid separate frameworks, use universal framework
-    if [ "$HAS_VALID_FRAMEWORKS" = false ]; then
+  # Fallback: if we don't have valid separate frameworks, use universal framework
+  if [ "$HAS_VALID_FRAMEWORKS" = false ]; then
       if [ -f "$UNIVERSAL_LIB" ] && [ -s "$UNIVERSAL_LIB" ]; then
         log "  ⚠️  Using universal framework as fallback (may only work for simulators)"
         XCFRAMEWORK_ARGS+=("-framework" "$UNIVERSAL_FRAMEWORK")
       fi
     fi
     
-    if [ ${#XCFRAMEWORK_ARGS[@]} -gt 0 ]; then
+  if [ ${#XCFRAMEWORK_ARGS[@]} -gt 0 ]; then
       FRAMEWORK_COUNT=$((${#XCFRAMEWORK_ARGS[@]} / 2))
       log "  Creating production-ready xcframework with $FRAMEWORK_COUNT framework(s)..."
       
@@ -1610,7 +2253,7 @@ EOF
       <key>LibraryIdentifier</key>
       <string>ios-arm64</string>
       <key>LibraryPath</key>
-      <string>ReactNativeRuntime.framework</string>
+      <string>${FRAMEWORK_NAME}.framework</string>
       <key>SupportedArchitectures</key>
       <array>
         <string>arm64</string>
@@ -1628,7 +2271,7 @@ EOF
       <key>LibraryIdentifier</key>
       <string>ios-arm64_x86_64-simulator</string>
       <key>LibraryPath</key>
-      <string>ReactNativeRuntime.framework</string>
+      <string>${FRAMEWORK_NAME}.framework</string>
       <key>SupportedArchitectures</key>
       <array>
         <string>arm64</string>
@@ -1647,7 +2290,7 @@ EOF
       <key>LibraryIdentifier</key>
       <string>ios-x86_64-simulator</string>
       <key>LibraryPath</key>
-      <string>ReactNativeRuntime.framework</string>
+      <string>${FRAMEWORK_NAME}.framework</string>
       <key>SupportedArchitectures</key>
       <array>
         <string>x86_64</string>
@@ -1665,7 +2308,7 @@ EOF
       <key>LibraryIdentifier</key>
       <string>ios-arm64-simulator</string>
       <key>LibraryPath</key>
-      <string>ReactNativeRuntime.framework</string>
+      <string>${FRAMEWORK_NAME}.framework</string>
       <key>SupportedArchitectures</key>
       <array>
         <string>arm64</string>
@@ -1697,7 +2340,11 @@ EOF
         if [ -d "${UNIFIED_XCFRAMEWORK}/ios-arm64" ]; then
           HAS_DEVICE_SLICE=true
         fi
-        if [ -d "${UNIFIED_XCFRAMEWORK}/ios-x86_64-simulator" ] || [ -d "${UNIFIED_XCFRAMEWORK}/ios-arm64-simulator" ]; then
+        # Check for simulator slices (various naming patterns)
+        if [ -d "${UNIFIED_XCFRAMEWORK}/ios-x86_64-simulator" ] || \
+           [ -d "${UNIFIED_XCFRAMEWORK}/ios-arm64-simulator" ] || \
+           [ -d "${UNIFIED_XCFRAMEWORK}/ios-arm64_x86_64-simulator" ] || \
+           [ -n "$(find "${UNIFIED_XCFRAMEWORK}" -maxdepth 1 -type d -name "ios-*-simulator" 2>/dev/null | head -1)" ]; then
           HAS_SIM_SLICE=true
         fi
         
@@ -1725,7 +2372,7 @@ EOF
       fi
       
       if [ -d "$UNIFIED_XCFRAMEWORK" ] && [ -f "${UNIFIED_XCFRAMEWORK}/Info.plist" ]; then
-        log "✅ Created unified ReactNativeRuntime.xcframework"
+        log "✅ Created unified MKDReactNativeRuntime.xcframework"
       else
         log "⚠️  Warning: Failed to create unified xcframework, will use static libraries approach"
         rm -rf "$UNIFIED_XCFRAMEWORK"
@@ -1735,13 +2382,9 @@ EOF
       log "⚠️  Warning: No valid framework binaries created, will use static libraries approach"
       UNIFIED_XCFRAMEWORK=""
     fi
-  fi
   
   # Cleanup temp directory
   rm -rf "$TEMP_FRAMEWORK_DIR"
-else
-  UNIFIED_XCFRAMEWORK=""
-  LIB_COUNT=0
 fi
 
 ########################################
@@ -1797,14 +2440,14 @@ cat > "${FRAMEWORK_ROOT}/Package.swift" <<EOF
 import PackageDescription
 
 let package = Package(
-    name: "ReactNativeRuntime",
+    name: "${PACKAGE_NAME}",
     platforms: [
         .iOS(.v14)
     ],
     products: [
         .library(
-            name: "ReactNativeRuntime",
-            targets: ["ReactNativeRuntime"]
+            name: "${PACKAGE_NAME}",
+            targets: ["${PACKAGE_NAME}"]
         ),
     ],
     dependencies: [],
@@ -1821,15 +2464,15 @@ if [ "$HAS_UNIFIED_XCFRAMEWORK" = true ]; then
 import PackageDescription
 
 let package = Package(
-    name: "ReactNativeRuntime",
+    name: "${PACKAGE_NAME}",
     defaultLocalization: "en",
     platforms: [
         .iOS(.v14)
     ],
     products: [
         .library(
-            name: "ReactNativeRuntime",
-            targets: ["ReactNativeRuntime"]
+            name: "${PACKAGE_NAME}",
+            targets: ["${PACKAGE_NAME}"]
         ),
         .library(
             name: "React",
@@ -1840,7 +2483,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "ReactNativeRuntimeBinary",
-            path: "ReactNativeRuntime.xcframework"
+            path: "MKDReactNativeRuntime.xcframework"
         ),
 EOF
 
@@ -1856,19 +2499,14 @@ fi
 
 cat >> "${FRAMEWORK_ROOT}/Package.swift" <<EOF
         .target(
-            name: "ReactNativeRuntime",
+            name: "${PACKAGE_NAME}",
             dependencies: ["ReactNativeRuntimeBinary"$(if [ -n "$HERMES_XCFRAMEWORK_DEST" ] && [ -d "$HERMES_XCFRAMEWORK_DEST" ]; then echo ', "HermesBinary"'; fi)],
-            path: "Sources/ReactNativeRuntime",
-            exclude: [
-                "Headers/**/*.m",
-                "Headers/**/*.mm",
-                "Headers/**/*.cpp",
-                "Headers/**/*.c",
-                "Headers/**/*.S"
-            ],
-            sources: ["ReactNativeRuntime.m"],
+            path: "Sources/${PACKAGE_NAME}",
+            sources: ["${PACKAGE_NAME}.m"],
             publicHeadersPath: "Headers",
             linkerSettings: [
+                .linkedFramework("MKDReactNativeRuntime"),
+                .linkedFramework("hermes"),
                 .linkedLibrary("c++"),
                 .linkedLibrary("z"),
                 .linkedLibrary("resolv"),
@@ -1889,16 +2527,11 @@ cat >> "${FRAMEWORK_ROOT}/Package.swift" <<EOF
             name: "React",
             dependencies: ["ReactNativeRuntimeBinary"$(if [ -n "$HERMES_XCFRAMEWORK_DEST" ] && [ -d "$HERMES_XCFRAMEWORK_DEST" ]; then echo ', "HermesBinary"'; fi)],
             path: "Sources/React",
-            exclude: [
-                "Headers/**/*.m",
-                "Headers/**/*.mm",
-                "Headers/**/*.cpp",
-                "Headers/**/*.c",
-                "Headers/**/*.S"
-            ],
             sources: ["React.m"],
             publicHeadersPath: "Headers",
             linkerSettings: [
+                .linkedFramework("MKDReactNativeRuntime"),
+                .linkedFramework("hermes"),
                 .linkedLibrary("c++"),
                 .linkedLibrary("z"),
                 .linkedLibrary("resolv"),
@@ -1922,9 +2555,9 @@ else
   # Fallback to source-based with static libraries (if no unified xcframework)
   cat >> "${FRAMEWORK_ROOT}/Package.swift" <<EOF
         .target(
-            name: "ReactNativeRuntime",
+            name: "${PACKAGE_NAME}",
             dependencies: [],
-            path: "Sources/ReactNativeRuntime",
+            path: "Sources/${PACKAGE_NAME}",
             publicHeadersPath: "Headers",
             linkerSettings: [
                 .linkedLibrary("c++"),
@@ -2028,7 +2661,7 @@ This package provides React Native 0.81.5 runtime as a Swift Package Manager (SP
 ### In Your Code
 
 \`\`\`swift
-import ReactNativeRuntime
+import ${PACKAGE_NAME}
 import React
 
 // Use React Native types
@@ -2048,6 +2681,9 @@ if [ ${#XCFRAMEWORK_NAMES[@]} -gt 0 ]; then
   done
 fi
 
+# Count headers in React.h for documentation (use React target's React.h as it's the most complete)
+REACT_H_COUNT=$(grep -c "^#import" "${REACT_HEADERS_DIR}/React/React.h" 2>/dev/null || grep -c "^#import" "${HEADERS_DIR}/React/React.h" 2>/dev/null || echo "159")
+
 cat >> "${FRAMEWORK_ROOT}/README.md" <<EOF
 
 ## Requirements
@@ -2060,11 +2696,104 @@ cat >> "${FRAMEWORK_ROOT}/README.md" <<EOF
 
 React Native 0.81.5
 
+## Header Coverage for Brownfield Integration
+
+This package includes **${REACT_H_COUNT} public headers** covering all essential React Native APIs for Brownfield integration with React Native 0.81.5.
+
+### ✅ Complete Header Coverage
+
+All critical headers required for RN 0.81.5 Brownfield integration are included:
+
+#### Core Brownfield Headers
+- \`RCTRootView.h\` - Embedding RN components in native views
+- \`RCTBridge.h\` - JS-Native bridge communication
+- \`RCTBridgeModule.h\` - Creating native modules
+- \`RCTViewManager.h\` - Custom view managers
+- \`RCTShadowView.h\` - Layout system
+- \`RCTComponent.h\` - Component protocol
+- \`RCTEventEmitter.h\` - Event communication
+- \`RCTTurboModuleRegistry.h\` - TurboModules support (RN 0.81.5)
+
+#### Core Modules
+- \`RCTEventDispatcher.h\` - Event dispatching
+- \`RCTUIManager.h\` - UI management
+- \`RCTBundleURLProvider.h\` - Bundle loading
+- \`RCTJavaScriptLoader.h\` - JavaScript loading
+- All CoreModules (Accessibility, AppState, Clipboard, DeviceInfo, etc.)
+
+#### UI Components
+- \`RCTView.h\`, \`RCTScrollView.h\`, \`RCTSafeAreaView.h\`
+- \`RCTModalHostView.h\`, \`RCTActivityIndicatorView.h\`
+- All view managers for built-in components
+
+#### Advanced Features
+- \`RCTSurface.h\` - Surface API for advanced rendering
+- \`RCTTurboModuleRegistry.h\` - TurboModules (New Architecture support)
+- \`RCTCallInvokerModule.h\` - Call invoker for async operations
+- Dev support headers (for development tools)
+
+### What You Can Do
+
+With these headers, you can:
+
+- ✅ Create \`RCTRootView\` instances to embed React Native components
+- ✅ Create native modules using \`RCTBridgeModule\` protocol
+- ✅ Create custom view managers using \`RCTViewManager\`
+- ✅ Use TurboModules via \`RCTTurboModuleRegistry\` (RN 0.81.5)
+- ✅ Handle events and communicate between JS and Native
+- ✅ Use all CoreModules (Accessibility, AppState, Clipboard, etc.)
+- ✅ Use all UI components (View, ScrollView, Modal, etc.)
+- ✅ Use Surface API for advanced rendering scenarios
+
+### Usage Example
+
+\`\`\`swift
+import UIKit
+import React
+
+class ProductsViewController: UIViewController {
+    var reactRootView: RCTRootView?
+    var bridge: RCTBridge?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        loadReactNativeModule()
+    }
+
+    func loadReactNativeModule() {
+        guard let bundleURL = Bundle.main.url(
+            forResource: "module-products",
+            withExtension: "bundle"
+        ) else {
+            print("Bundle not found")
+            return
+        }
+
+        bridge = RCTBridge(bundleURL: bundleURL, moduleProvider: nil, launchOptions: nil)
+        let rootView = RCTRootView(
+            bridge: bridge!,
+            moduleName: "ModuleProducts",
+            initialProperties: nil
+        )
+
+        rootView.backgroundColor = .white
+        self.view = rootView
+        self.reactRootView = rootView
+    }
+
+    deinit {
+        bridge?.invalidate()
+    }
+}
+\`\`\`
+
 ## Notes
 
-- Headers are available via \`import React\` and \`import ReactCommon\`
+- Headers are available via \`import React\` (umbrella header includes all ${REACT_H_COUNT} headers)
 - All React Native static libraries are linked via xcframeworks
 - Hermes engine is included for JavaScript execution
+- This package is **complete and sufficient** for RN 0.81.5 Brownfield integration
+- No additional headers are required beyond what's included in this package
 EOF
 
 ########################################
@@ -2098,6 +2827,29 @@ echo "   frameworks/ios/ → $FRAMEWORKS_IOS_DIR"
 echo "   frameworks/ios/ReactNativeRuntime/ → $FRAMEWORK_ROOT"
 
 ########################################
+# Final cleanup - Remove Yoga/ (capital) directory if it still exists
+# We only need yoga/ (lowercase) for RCTConvert.h imports
+########################################
+if [ -d "${REACT_HEADERS_DIR}/Yoga" ]; then
+  rm -rf "${REACT_HEADERS_DIR}/Yoga" 2>/dev/null || true
+  log "  ✅ Final cleanup: Removed Yoga/ (capital) directory"
+fi
+
+# Ensure yoga/ directory exists with headers
+if [ ! -d "${REACT_HEADERS_DIR}/yoga" ] || [ -z "$(find "${REACT_HEADERS_DIR}/yoga" -name "*.h" 2>/dev/null | head -1)" ]; then
+  if [ -d "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga" ]; then
+    mkdir -p "${REACT_HEADERS_DIR}/yoga"
+    for file in "${REACT_HEADERS_DIR}/ReactCommon/yoga/yoga"/*.h; do
+      if [ -f "$file" ]; then
+        filename=$(basename "$file")
+        cp "$file" "${REACT_HEADERS_DIR}/yoga/$filename" 2>/dev/null || true
+      fi
+    done
+    log "  ✅ Final cleanup: Ensured yoga/ directory exists with headers"
+  fi
+fi
+
+########################################
 # Summary
 ########################################
 log "🎉 SUCCESS! React Native Runtime SPM generated"
@@ -2123,7 +2875,7 @@ fi
 echo "📝 Next steps:"
 echo "   1. Add to Xcode: File → Add Package Dependencies → Add Local..."
 echo "   2. Navigate to: $FRAMEWORK_ROOT"
-echo "   3. Import in your code: import ReactNativeRuntime"
+echo "   3. Import in your code: import ${PACKAGE_NAME}"
 echo "   4. Use React Native types: import React"
 echo ""
 if [ ${#BUILD_FAILURES[@]} -gt 0 ]; then

@@ -1,1 +1,0 @@
-FBReactNativeSpec/react/renderer/components/FBReactNativeSpec/States.h

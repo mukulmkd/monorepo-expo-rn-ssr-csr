@@ -31,4 +31,8 @@ frameworks/android/**/dist/
 frameworks/android/**/.gradle/
 frameworks/android/**/*.aar
 frameworks/android/**/local.properties
-rn-runtime-source/**/local.properties
+frameworks/android/**/*.bundle
+# Artifactory credentials (contains sensitive information)
+frameworks/android/artifactory.properties
+# Android properties (centralized configuration)
+android-props/artifactory.properties

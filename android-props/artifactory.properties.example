@@ -1,0 +1,39 @@
+# Artifactory Configuration Example
+# 
+# This file is a template for Artifactory credentials.
+# 
+# Setup:
+#   1. Copy this file to artifactory.properties
+#   2. Fill in your Artifactory credentials below
+#   3. DO NOT commit artifactory.properties to git (it's in .gitignore)
+#
+# Usage:
+#   This file is only used when publishing to Artifactory (LOCATION=central).
+#   For local publishing (LOCATION=local), this file is not needed.
+#
+# Version handling:
+#   Version is NOT controlled by this file. It's determined by:
+#   1. VERSION parameter (if provided): ./scripts/publish-aar.sh ... VERSION=1.2.3
+#   2. package.json version (if VERSION not provided)
+#   3. Default: 1.0.0
+#
+# Environment variable overrides:
+#   All values below can be overridden by environment variables:
+#   - ARTIFACTORY_USER
+#   - ARTIFACTORY_PASSWORD
+#   - ARTIFACTORY_CONTEXT_URL
+#   - ARTIFACTORY_REPO
+
+# Artifactory URL (without trailing slash)
+# Example: https://your-company.com/artifactory/mobile-apps-artifacts
+artifactory_contextUrl=https://blah.mkdcorp.com/artifactory/mobile-apps-artifacts
+
+# Repository name
+# Example: mobile, releases, snapshots
+mobileRepo=mobile
+
+# Artifactory credentials
+# Replace with your actual Artifactory username and password
+artifactory_user=your-username
+artifactory_password=your-password
+

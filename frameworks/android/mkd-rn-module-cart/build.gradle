@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+    id 'maven-publish'
+}
+
+android {
+    namespace 'com.yourorg.cart'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 23
+        targetSdk 34
+        versionName project.findProperty("publish_version") ?: "1.0.0"
+        
+        consumerProguardFiles "consumer-rules.pro"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+// Note: Repositories are defined in settings.gradle
+// (repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS) requires this)
+
+dependencies {
+    // React Native dependencies - using standard Maven dependencies
+    // Consumers must add React Native to their app's dependencies
+    compileOnly 'com.facebook.react:react-android:0.81.5'
+    compileOnly 'com.facebook.react:hermes-android:0.81.5'
+    
+    // Kotlin standard library
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.0'
+}
+
+// Publishing configuration will be added dynamically by publish-aar.sh when needed

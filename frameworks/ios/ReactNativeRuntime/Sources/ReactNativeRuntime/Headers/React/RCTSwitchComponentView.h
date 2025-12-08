@@ -1,1 +1,0 @@
-Fabric/Mounting/ComponentViews/Switch/RCTSwitchComponentView.h
