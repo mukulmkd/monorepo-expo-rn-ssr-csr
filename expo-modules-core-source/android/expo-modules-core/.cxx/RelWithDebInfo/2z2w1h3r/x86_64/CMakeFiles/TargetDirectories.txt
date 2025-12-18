@@ -1,0 +1,3 @@
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/x86_64/CMakeFiles/expo-modules-core.dir
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/x86_64/CMakeFiles/edit_cache.dir
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/x86_64/CMakeFiles/rebuild_cache.dir

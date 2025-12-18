@@ -1,0 +1,33 @@
+// Root build.gradle for expo-modules-core multi-project build
+buildscript {
+    ext {
+        buildToolsVersion = "36.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 34
+        targetSdkVersion = 34
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.1.0"
+        reactNativeVersion = "0.81.5"
+    }
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        mavenLocal()  // For expo-module-gradle-plugin
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.13.1")
+        // React Native Gradle plugin - not available as standalone Maven artifact
+        // expo-module-gradle-plugin will handle React Native plugin resolution
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${kotlinVersion}")
+        classpath("expo.modules:expo-module-gradle-plugin:3.0.23")
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        mavenLocal()
+    }
+}

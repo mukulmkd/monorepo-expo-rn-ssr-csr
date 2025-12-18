@@ -97,7 +97,11 @@ You have two options:
   - ⚠️ SPM requires Git tags for versioning (can work with subdirectories)
   - ⚠️ Less flexible for independent module versioning
 
-**Recommendation**: Use **Option A** (one repo per module) for iOS SPM packages. This is the industry standard and provides better flexibility.
+**Recommendation**: 
+- **Option A** (one repo per module): Best for independent versioning and granular control
+- **Option B** (single repo): Best for scalability and simpler management (especially with many modules)
+
+**📖 See [Single Repository Strategy Guide](./3_REPO_MODULES_SPM_ALTERNATE_STRATEGY.md) for complete details on Option B.**
 
 **Note**: For Android AARs, you can keep them all in the same repository (modules-repo) since Maven doesn't require separate repos.
 

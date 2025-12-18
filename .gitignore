@@ -18,6 +18,9 @@ npm-cache/
 build/
 dist-rn-runtime/
 build-rn-runtime/
+# Temporary test directories
+.tmp-ios-kit-test/
+.tmp-native-kit-gen/
 # Framework build artifacts
 frameworks/ios/**/build/
 frameworks/ios/**/.build/
@@ -36,3 +39,9 @@ frameworks/android/**/*.bundle
 frameworks/android/artifactory.properties
 # Android properties (centralized configuration)
 android-props/artifactory.properties
+# Compiled Java classes (build artifacts)
+*.class
+com/
+# Java heap dump files
+*.hprof
+java_pid*.hprof

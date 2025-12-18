@@ -1,0 +1,9 @@
+#import <Foundation/Foundation.h>
+#import <React/RCTConvert.h>
+#import "RNSVGFilterPrimitive.h"
+
+@interface RNSVGFeMerge : RNSVGFilterPrimitive
+
+@property (nonatomic, copy) NSArray<NSString *> *nodes;
+
+@end

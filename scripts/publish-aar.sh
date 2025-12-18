@@ -5,14 +5,18 @@
 #   ./scripts/publish-aar.sh AAR=<aar-name> LOCATION=<local|central> [VERSION=<version>]
 #
 # Examples:
-#   ./scripts/publish-aar.sh AAR=mkd-rn-host LOCATION=local
-#   ./scripts/publish-aar.sh AAR=mkd-rn-host LOCATION=central VERSION=1.2.3
-#   ./scripts/publish-aar.sh AAR=mkd-rn-module-products LOCATION=local VERSION=0.0.1
+#   ./scripts/publish-aar.sh AAR=vsco-rn-host LOCATION=local
+#   ./scripts/publish-aar.sh AAR=vsco-rn-host LOCATION=central VERSION=1.2.3
+#   ./scripts/publish-aar.sh AAR=vsco-rn-module-products LOCATION=local
+#   ./scripts/publish-aar.sh AAR=custom-aar LOCATION=local GROUP_ID=com.custom ARTIFACT_ID=custom-artifact
 #
 # Parameters:
-#   AAR      - AAR name: mkd-rn-host, mkd-rn-module-products, mkd-rn-module-cart, mkd-rn-module-pdp
-#   LOCATION - Where to publish: local (mavenLocal) or central (Artifactory)
-#   VERSION  - Version to publish (optional, defaults to 1.0.0)
+#   AAR           - AAR name (e.g., vsco-rn-host, vsco-rn-module-products)
+#   LOCATION      - Where to publish: local (mavenLocal) or central (Artifactory)
+#   VERSION       - Version to publish (optional, defaults to package.json version or 1.0.0)
+#   GROUP_ID      - Maven group ID (optional, defaults to com.vscorp)
+#   ARTIFACT_ID   - Maven artifact ID (optional, auto-derived from AAR name)
+#   GENERATE_SCRIPT - npm script to generate AAR (optional, auto-derived from AAR name)
 #
 # Environment variables (for Artifactory, override artifactory.properties):
 #   ARTIFACTORY_USER - Artifactory username
@@ -47,6 +51,12 @@ for arg in "$@"; do
     LOCATION="${arg#LOCATION=}"
   elif [[ "$arg" =~ ^VERSION= ]]; then
     VERSION="${arg#VERSION=}"
+  elif [[ "$arg" =~ ^GROUP_ID= ]]; then
+    GROUP_ID="${arg#GROUP_ID=}"
+  elif [[ "$arg" =~ ^ARTIFACT_ID= ]]; then
+    ARTIFACT_ID="${arg#ARTIFACT_ID=}"
+  elif [[ "$arg" =~ ^GENERATE_SCRIPT= ]]; then
+    GENERATE_SCRIPT="${arg#GENERATE_SCRIPT=}"
   fi
 done
 
@@ -58,15 +68,10 @@ if [ -z "$AAR_NAME" ] || [ -z "$LOCATION" ]; then
   err "  ./scripts/publish-aar.sh AAR=<aar-name> LOCATION=<local|central> [VERSION=<version>]"
   err ""
   err "Examples:"
-  err "  ./scripts/publish-aar.sh AAR=mkd-rn-host LOCATION=local"
-  err "  ./scripts/publish-aar.sh AAR=mkd-rn-host LOCATION=central VERSION=1.2.3"
-  err "  ./scripts/publish-aar.sh AAR=mkd-rn-module-products LOCATION=local VERSION=0.0.1"
-  err ""
-  err "Valid AAR names:"
-  err "  - mkd-rn-host"
-  err "  - mkd-rn-module-products"
-  err "  - mkd-rn-module-cart"
-  err "  - mkd-rn-module-pdp"
+  err "  ./scripts/publish-aar.sh AAR=vsco-rn-host LOCATION=local"
+  err "  ./scripts/publish-aar.sh AAR=vsco-rn-host LOCATION=central VERSION=1.2.3"
+  err "  ./scripts/publish-aar.sh AAR=vsco-rn-module-products LOCATION=local"
+  err "  ./scripts/publish-aar.sh AAR=custom-aar LOCATION=local GROUP_ID=com.custom ARTIFACT_ID=custom-artifact"
   err ""
   err "Valid locations:"
   err "  - local (publishes to ~/.m2/repository)"
@@ -81,42 +86,44 @@ if [ "$LOCATION" != "local" ] && [ "$LOCATION" != "central" ]; then
   exit 1
 fi
 
-# Map AAR name to expected AAR filename, directory, and artifact ID
-case "$AAR_NAME" in
-  mkd-rn-host)
-    AAR_FILENAME="mkd-rn-host-release.aar"
-    AAR_DIR="mkd-rn-host"
-    GROUP_ID="com.mkdcorp"
-    ARTIFACT_ID="mkd-rn-host-sdk"
+########################################
+# Derive AAR properties from AAR name (pattern-based, with optional overrides)
+########################################
+
+# AAR filename: {AAR_NAME}-release.aar
+AAR_FILENAME="${AAR_NAME}-release.aar"
+
+# AAR directory: same as AAR_NAME
+AAR_DIR="$AAR_NAME"
+
+# Group ID: default to com.vscorp, allow override
+if [ -z "${GROUP_ID:-}" ]; then
+  GROUP_ID="com.vscorp"
+fi
+
+# Artifact ID: derive from AAR name pattern, allow override
+if [ -z "${ARTIFACT_ID:-}" ]; then
+  if [[ "$AAR_NAME" == "vsco-rn-host" ]]; then
+    # Special case: host uses -sdk suffix
+    ARTIFACT_ID="vsco-rn-host-sdk"
+  else
+    # For modules and other AARs, use the AAR name as artifact ID
+    ARTIFACT_ID="$AAR_NAME"
+  fi
+fi
+
+# Generate script: optional, used for error messages only
+if [ -z "${GENERATE_SCRIPT:-}" ]; then
+  # Try to derive from AAR name pattern
+  if [[ "$AAR_NAME" == "vsco-rn-host" ]]; then
     GENERATE_SCRIPT="framework:android:aar:host"
-    ;;
-  mkd-rn-module-products)
-    AAR_FILENAME="mkd-rn-module-products-release.aar"
-    AAR_DIR="mkd-rn-module-products"
-    GROUP_ID="com.mkdcorp"
-    ARTIFACT_ID="mkd-rn-module-products"
-    GENERATE_SCRIPT="framework:android:aar:products"
-    ;;
-  mkd-rn-module-cart)
-    AAR_FILENAME="mkd-rn-module-cart-release.aar"
-    AAR_DIR="mkd-rn-module-cart"
-    GROUP_ID="com.mkdcorp"
-    ARTIFACT_ID="mkd-rn-module-cart"
-    GENERATE_SCRIPT="framework:android:aar:cart"
-    ;;
-  mkd-rn-module-pdp)
-    AAR_FILENAME="mkd-rn-module-pdp-release.aar"
-    AAR_DIR="mkd-rn-module-pdp"
-    GROUP_ID="com.mkdcorp"
-    ARTIFACT_ID="mkd-rn-module-pdp"
-    GENERATE_SCRIPT="framework:android:aar:pdp"
-    ;;
-  *)
-    err "Unknown AAR name: $AAR_NAME"
-    err "Valid AAR names: mkd-rn-host, mkd-rn-module-products, mkd-rn-module-cart, mkd-rn-module-pdp"
-    exit 1
-    ;;
-esac
+  elif [[ "$AAR_NAME" =~ ^vsco-rn-module-(.+)$ ]]; then
+    MODULE_NAME="${BASH_REMATCH[1]}"
+    GENERATE_SCRIPT="framework:android:aar:${MODULE_NAME}"
+  else
+    GENERATE_SCRIPT="framework:android:aar:${AAR_NAME}"
+  fi
+fi
 
 ########################################
 # Check if AAR exists in distribution folder
@@ -238,12 +245,8 @@ BUILD_OUTPUT_AAR_DIR="${AAR_PATH}/build/outputs/aar"
 mkdir -p "$BUILD_OUTPUT_AAR_DIR"
 
 # Determine the expected AAR filename in build output
-BUILD_AAR_FILENAME=""
-if [ "$AAR_NAME" = "mkd-rn-host" ]; then
-  BUILD_AAR_FILENAME="mkd-rn-host-release.aar"
-else
-  BUILD_AAR_FILENAME="$AAR_FILENAME"
-fi
+# Use the same pattern: {AAR_NAME}-release.aar
+BUILD_AAR_FILENAME="$AAR_FILENAME"
 
 BUILD_AAR="${BUILD_OUTPUT_AAR_DIR}/${BUILD_AAR_FILENAME}"
 

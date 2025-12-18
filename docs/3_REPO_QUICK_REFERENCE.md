@@ -25,7 +25,9 @@ your-runtime-repo/          # Your existing Git repo
 
 ### Q2: Module SPMs - Do we need 3 separate repositories?
 
-**Answer: YES - Recommended (Industry Standard)**
+**Answer: You have TWO options**
+
+#### Option A: Separate Repositories (Original Recommendation)
 
 For iOS SPM packages, create **3 separate GitHub repositories**:
 
@@ -40,19 +42,41 @@ For iOS SPM packages, create **3 separate GitHub repositories**:
 - ✅ Better for CI/CD pipelines
 - ✅ Cleaner dependency management
 
-**Alternative (Not Recommended):**
+#### Option B: Single Repository (Alternate Strategy - Recommended for Scalability)
 
-- Single monorepo with all modules (works but less flexible)
+Use **one GitHub repository** for all module SPM packages:
+
+- `react-native-modules.git` (contains all modules)
+
+**Two sub-options:**
+
+**B1: Shared Versioning** (Simpler)
+
+- ✅ All modules version together (e.g., all at v1.0.0)
+- ✅ Works with SPM natively
+- ⚠️ All modules must version together
+
+**B2: Independent Versioning** (More Flexible)
+
+- ✅ Each module has its own version (e.g., products@1.0.0, cart@2.0.0)
+- ✅ Single repository for all modules
+- ⚠️ Requires manual version tracking via VERSIONS.md
+- ⚠️ Xcode shows repository version, not per-module versions
+
+**📖 See:**
+
+- [Shared Versioning Guide](./3_REPO_MODULES_SPM_ALTERNATE_STRATEGY.md) - For Option B1
+- [Independent Versioning Guide](./3_REPO_MODULES_SPM_INDEPENDENT_VERSIONING.md) - For Option B2
 
 ---
 
 ## Repository Summary
 
-| Repository   | Purpose                  | Git Structure                                              | Publishing                                            |
-| ------------ | ------------------------ | ---------------------------------------------------------- | ----------------------------------------------------- |
-| **Monorepo** | React Native development | Single repo                                                | Verdaccio (npm)                                       |
-| **Runtime**  | Android + iOS runtime    | Single repo (your existing)                                | Maven Local/Artifactory (Android)<br>GitHub (iOS SPM) |
-| **Modules**  | Module AARs + SPMs       | **3 separate GitHub repos** (iOS)<br>Single repo (Android) | Maven Local/Artifactory (Android)<br>GitHub (iOS SPM) |
+| Repository   | Purpose                  | Git Structure                                                                                           | Publishing                                            |
+| ------------ | ------------------------ | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **Monorepo** | React Native development | Single repo                                                                                             | Verdaccio (npm)                                       |
+| **Runtime**  | Android + iOS runtime    | Single repo (your existing)                                                                             | Maven Local/Artifactory (Android)<br>GitHub (iOS SPM) |
+| **Modules**  | Module AARs + SPMs       | **Option A:** 3 separate GitHub repos (iOS)<br>**Option B:** Single repo (iOS)<br>Single repo (Android) | Maven Local/Artifactory (Android)<br>GitHub (iOS SPM) |
 
 ---
 
@@ -69,12 +93,23 @@ For iOS SPM packages, create **3 separate GitHub repositories**:
 
 ### Step 2: Module Repository (iOS)
 
+**Choose one approach:**
+
+**Option A: Separate Repositories**
+
 - [ ] Create 3 GitHub repositories:
   - [ ] `MKDRNModuleProductsSPM`
   - [ ] `MKDRNModuleCartSPM`
   - [ ] `MKDRNModulePDPSPM`
 - [ ] Copy SPM packages from monorepo to respective repos
 - [ ] Create generation/publish scripts
+
+**Option B: Single Repository (Recommended for Scalability)**
+
+- [ ] Create single repository: `react-native-modules`
+- [ ] Copy all SPM packages from monorepo to `ios/` directory
+- [ ] Create generation/publish scripts
+- [ ] See [Single Repository Strategy Guide](./3_REPO_MODULES_SPM_ALTERNATE_STRATEGY.md) for details
 
 ### Step 3: Module Repository (Android)
 

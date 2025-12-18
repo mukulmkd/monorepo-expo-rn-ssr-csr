@@ -1,6 +1,6 @@
 {
   "name": "@app/module-pdp",
-  "version": "0.1.8",
+  "version": "0.1.16",
   "private": false,
   "main": "index.js",
   "scripts": {
@@ -14,7 +14,8 @@
     "@pkg/core": "^0.1.0",
     "@pkg/pdp-ui": "^0.1.0",
     "@pkg/state": "^0.1.0",
-    "@pkg/ui": "^0.1.0"
+    "@pkg/ui": "^0.1.0",
+    "react-native-camera": "^4.2.1"
   },
   "peerDependencies": {
     "expo": ">=54.0.0",

@@ -71,8 +71,8 @@ log "  REGISTRY_VERSION=$REGISTRY_VERSION"
 # Convert module name to lowercase (bash 3.2 compatible)
 MODULE_NAME_LOWER=$(echo "$MODULE_NAME" | tr '[:upper:]' '[:lower:]')
 
-# Folder naming: mkd-rn-module-XXXX (e.g., mkd-rn-module-products)
-FRAMEWORK_DIR_NAME="mkd-rn-module-${MODULE_NAME_LOWER}"
+# Folder naming: vsco-rn-module-XXXX (e.g., vsco-rn-module-products)
+FRAMEWORK_DIR_NAME="vsco-rn-module-${MODULE_NAME_LOWER}"
 FRAMEWORK_DIR="${MONOREPO_ROOT}/frameworks/android/${FRAMEWORK_DIR_NAME}"
 
 # Framework name for Gradle project and Kotlin class (keep descriptive for code)
@@ -83,19 +83,19 @@ DIST_DIR="${FRAMEWORK_DIR}/dist"
 SOURCES_DIR="${FRAMEWORK_DIR}/src/main"
 ASSETS_DIR="${SOURCES_DIR}/assets"
 
-# AAR naming: mkd-rn-module-XXXX-release.aar
-AAR_NAME="mkd-rn-module-${MODULE_NAME_LOWER}-release.aar"
-JAVA_DIR="${SOURCES_DIR}/java/com/yourorg/${MODULE_NAME_LOWER}"
+# AAR naming: vsco-rn-module-XXXX-release.aar
+AAR_NAME="vsco-rn-module-${MODULE_NAME_LOWER}-release.aar"
+JAVA_DIR="${SOURCES_DIR}/java/com/vscorp/${MODULE_NAME_LOWER}"
 BUNDLE_FILE="${ASSETS_DIR}/module-${MODULE_NAME}.bundle"
 
 # Temporary npm environment for bundling (only used if module not in monorepo)
 TEMP_NPM_DIR="${BUILD_DIR}/npm-env"
 
-# Verdaccio configuration
+# Verdaccio configuration - This will be jfrog in production so need to parametrize it
 VERDACCIO_URL="http://localhost:4873"
 
 # Package name for Java/Kotlin (lowercase, no hyphens)
-PACKAGE_NAME="com.yourorg.${MODULE_NAME_LOWER}"
+PACKAGE_NAME="com.vscorp.${MODULE_NAME_LOWER}"
 
 ########################################
 # Helpers
@@ -103,6 +103,461 @@ PACKAGE_NAME="com.yourorg.${MODULE_NAME_LOWER}"
 log(){ echo -e "\n==> $*\n"; }
 err(){ echo -e "\n‼️ ERROR: $*\n" >&2; }
 warn(){ echo -e "\n⚠️  WARNING: $*\n"; }
+
+########################################
+# Native Dependency Detection and Bundling
+########################################
+
+# Function to detect native dependencies by scanning source files
+# Scans .tsx/.ts/.js/.jsx files for react-native-* and expo-* imports
+# Checks module package.json first, then root package.json
+# Only includes packages that have actual native code
+detect_native_dependencies() {
+    local module_dir="$1"
+    local module_package_json="$2"
+    local root_package_json="${MONOREPO_ROOT}/package.json"
+    local temp_npm_dir="${3:-}"  # Optional third parameter for TEMP_NPM_DIR
+    local detected_packages=""
+    
+    if [ ! -d "$module_dir" ]; then
+        warn "Module directory not found: $module_dir"
+        return
+    fi
+    
+    # Scan source files for react-native-* and expo-* imports
+    # Pattern matches: import ... from "react-native-xxx" or import ... from "expo-xxx"
+    # Also scan transitive dependencies (like @pkg/ui) that may use native libraries
+    local source_files=$(find "$module_dir" -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.js" -o -name "*.jsx" \) 2>/dev/null)
+    
+    # Also scan source files from dependencies (transitive dependencies like @pkg/ui)
+    # Check node_modules for @pkg/* packages and scan their source files too
+    # This handles cases where react-native-svg is used in @pkg/ui but module-cart depends on @pkg/ui
+    local dependency_source_files=""
+    
+    # Check multiple possible locations for node_modules
+    # Priority: 1. TEMP_NPM_DIR (where module is installed from Verdaccio), 2. module_dir/node_modules, 3. monorepo node_modules
+    local possible_node_modules=()
+    if [ -n "$temp_npm_dir" ] && [ -d "$temp_npm_dir" ]; then
+        possible_node_modules+=("${temp_npm_dir}/node_modules")
+    fi
+    if [ -d "${module_dir}/node_modules" ]; then
+        possible_node_modules+=("${module_dir}/node_modules")
+    fi
+    if [ -d "${MONOREPO_ROOT}/node_modules" ]; then
+        possible_node_modules+=("${MONOREPO_ROOT}/node_modules")
+    fi
+    
+    # Recursive function to scan @pkg/* dependencies
+    # This handles nested dependencies: module-cart -> @pkg/cart-ui -> @pkg/ui -> react-native-svg
+    scan_pkg_dependencies() {
+        local pkg_dir="$1"
+        local scanned_pkgs="$2"  # Track already scanned packages to avoid infinite loops
+        local node_modules_dir="$3"
+        
+        if [ ! -d "$pkg_dir" ] || [ ! -d "${pkg_dir}/src" ]; then
+            return
+        fi
+        
+        local pkg_name=$(basename "$pkg_dir")
+        
+        # Avoid infinite loops - skip if already scanned
+        if echo "$scanned_pkgs" | grep -q "^${pkg_name}$"; then
+            return
+        fi
+        scanned_pkgs="${scanned_pkgs}${pkg_name}"$'\n'
+        
+        # Scan this package's source files for @pkg/* imports
+        local pkg_source_files=$(find "$pkg_dir/src" -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.js" -o -name "*.jsx" \) 2>/dev/null)
+        
+        if [ -n "$pkg_source_files" ]; then
+            # Add this package's source files to dependency_source_files
+            dependency_source_files="${dependency_source_files}${pkg_source_files}"$'\n'
+            
+            # Check if this package imports other @pkg/* packages (nested dependencies)
+            local nested_pkg_imports=$(echo "$pkg_source_files" | tr '\n' '\0' | xargs -0 grep -hE "from ['\"]@pkg/" 2>/dev/null | \
+                grep -oE "@pkg/[a-zA-Z0-9_-]+" | \
+                sed 's/@pkg\///' | \
+                sort -u | \
+                tr '\n' ' ' | \
+                xargs)
+            
+            # Recursively scan nested @pkg/* dependencies
+            if [ -n "$nested_pkg_imports" ]; then
+                for nested_pkg in $nested_pkg_imports; do
+                    local nested_pkg_dir="${node_modules_dir}/@pkg/${nested_pkg}"
+                    if [ -d "$nested_pkg_dir" ]; then
+                        scan_pkg_dependencies "$nested_pkg_dir" "$scanned_pkgs" "$node_modules_dir"
+                    fi
+                done
+            fi
+        fi
+    }
+    
+    for node_modules_dir in "${possible_node_modules[@]}"; do
+        if [ -d "${node_modules_dir}/@pkg" ]; then
+            for pkg_dir in "${node_modules_dir}/@pkg"/*; do
+                if [ -d "$pkg_dir" ] && [ -d "${pkg_dir}/src" ]; then
+                    local pkg_name=$(basename "$pkg_dir")
+                    
+                    # Check if this @pkg/* package is imported by the module
+                    # This works with Verdaccio-installed modules because we scan the module's source files
+                    if [ -n "$source_files" ] && echo "$source_files" | tr '\n' '\0' | xargs -0 grep -q "from ['\"]@pkg/${pkg_name}"; then
+                        # Extract component names that are actually imported from this package
+                        # Pattern: import { Component1, Component2 } from "@pkg/ui"
+                        local imported_from_this_pkg=$(echo "$source_files" | tr '\n' '\0' | xargs -0 grep -hE "from ['\"]@pkg/${pkg_name}" 2>/dev/null | \
+                            grep -oE "\{[^}]*\}" | \
+                            sed 's/[{}]//g' | \
+                            tr ',' '\n' | \
+                            sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
+                            grep -v "^$" | \
+                            sort -u | \
+                            tr '\n' ' ' | \
+                            xargs)
+                        
+                        if [ -n "$imported_from_this_pkg" ]; then
+                            # Only scan source files for components that are actually imported
+                            for component in $imported_from_this_pkg; do
+                                # Look for component file in primitives/ or directly in src/
+                                # This works with Verdaccio because source files are included in the published package
+                                local component_file=$(find "$pkg_dir/src" -type f \( \
+                                    -path "*/primitives/${component}.tsx" -o \
+                                    -path "*/primitives/${component}.ts" -o \
+                                    -path "*/${component}.tsx" -o \
+                                    -path "*/${component}.ts" -o \
+                                    -path "*/${component}.jsx" -o \
+                                    -path "*/${component}.js" \
+                                \) 2>/dev/null | head -1)
+                                
+                                if [ -n "$component_file" ] && [ -f "$component_file" ]; then
+                                    dependency_source_files="${dependency_source_files}${component_file}"$'\n'
+                                fi
+                            done
+                            
+                            # Recursively scan nested @pkg/* dependencies (e.g., @pkg/cart-ui -> @pkg/ui)
+                            scan_pkg_dependencies "$pkg_dir" "" "$node_modules_dir"
+                        else
+                            # If we can't determine specific components (e.g., import * from "@pkg/ui")
+                            # Scan all source files as fallback (conservative approach)
+                            local pkg_sources=$(find "$pkg_dir" -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.js" -o -name "*.jsx" \) 2>/dev/null)
+                            if [ -n "$pkg_sources" ]; then
+                                dependency_source_files="${dependency_source_files}${pkg_sources}"$'\n'
+                            fi
+                            
+                            # Recursively scan nested @pkg/* dependencies
+                            scan_pkg_dependencies "$pkg_dir" "" "$node_modules_dir"
+                        fi
+                    fi
+                fi
+            done
+        fi
+    done
+    
+    # Combine module source files and dependency source files
+    # Ensure proper newline separation between the two sets of files
+    local all_source_files=""
+    if [ -n "$source_files" ]; then
+        all_source_files="$source_files"
+    fi
+    if [ -n "$dependency_source_files" ]; then
+        if [ -n "$all_source_files" ]; then
+            all_source_files="${all_source_files}"$'\n'"${dependency_source_files}"
+        else
+            all_source_files="$dependency_source_files"
+        fi
+    fi
+    
+    if [ -z "$all_source_files" ]; then
+        # Don't warn - this is expected if scanning installed module from Verdaccio
+        echo ""
+        return
+    fi
+    
+    # Extract package names from imports
+    # Matches: from "react-native-xxx" or from 'react-native-xxx' or require("react-native-xxx")
+    # Use a simpler approach: process all files at once with xargs
+    local imported_packages=""
+    if [ -n "$all_source_files" ]; then
+        # Use xargs with -0 for null-separated input (more reliable)
+        imported_packages=$(echo "$all_source_files" | tr '\n' '\0' | xargs -0 grep -hE "from ['\"](react-native-|expo-)" 2>/dev/null | \
+            grep -oE "(react-native-|expo-)[a-zA-Z0-9_-]+" | \
+            sort -u | \
+            grep -v "^react-native$" | \
+            tr '\n' ' ' | \
+            xargs)
+    fi
+    
+    if [ -z "$imported_packages" ]; then
+        echo ""
+        return
+    fi
+    
+    # For each imported package, check if it exists in package.json and has native code
+    if command -v node &> /dev/null; then
+        # Use a more robust approach: write imported packages to a temp file to avoid shell escaping issues
+        local temp_imports_file=$(mktemp)
+        echo "$imported_packages" > "$temp_imports_file"
+        
+        detected_packages=$(node -e "
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Read imported packages from temp file to avoid shell escaping issues
+            const importedPkgsStr = fs.readFileSync('$temp_imports_file', 'utf8').trim();
+            const importedPkgs = importedPkgsStr ? importedPkgsStr.split(/\\s+/).filter(p => p && p.trim()) : [];
+            
+            const modulePkgJson = '$module_package_json';
+            const rootPkgJson = '$root_package_json';
+            const monorepoRoot = process.env.MONOREPO_ROOT || '${MONOREPO_ROOT}';
+            const moduleDir = '$module_dir';
+            
+            const nativeDeps = [];
+            
+            for (const pkg of importedPkgs) {
+                // Skip if not a native package pattern
+                if (!pkg.startsWith('react-native-') && !pkg.startsWith('expo-')) {
+                    continue;
+                }
+                if (pkg === 'react-native') {
+                    continue;
+                }
+                
+                // Check module package.json first (if provided)
+                let pkgVersion = null;
+                let foundInModule = false;
+                
+                if (modulePkgJson && modulePkgJson.trim() !== '' && fs.existsSync(modulePkgJson)) {
+                    try {
+                        const modulePkg = JSON.parse(fs.readFileSync(modulePkgJson, 'utf8'));
+                        const allDeps = {
+                            ...(modulePkg.dependencies || {}),
+                            ...(modulePkg.peerDependencies || {}),
+                            ...(modulePkg.devDependencies || {})
+                        };
+                        if (allDeps[pkg]) {
+                            pkgVersion = allDeps[pkg];
+                            foundInModule = true;
+                        }
+                    } catch (e) {
+                        // Continue to root check
+                    }
+                }
+                
+                // Fallback to root package.json
+                if (!pkgVersion && fs.existsSync(rootPkgJson)) {
+                    try {
+                        const rootPkg = JSON.parse(fs.readFileSync(rootPkgJson, 'utf8'));
+                        const allDeps = {
+                            ...(rootPkg.dependencies || {}),
+                            ...(rootPkg.peerDependencies || {}),
+                            ...(rootPkg.devDependencies || {})
+                        };
+                        if (allDeps[pkg]) {
+                            pkgVersion = allDeps[pkg];
+                        }
+                    } catch (e) {
+                        // Continue
+                    }
+                }
+                
+                // If package found in either package.json, check for native code
+                if (pkgVersion) {
+                    // Check multiple possible locations for native code
+                    // Priority: 1. Installed package's node_modules, 2. Monorepo node_modules, 3. Current dir node_modules
+                    const possiblePaths = [
+                        ...(moduleDir && moduleDir.trim() !== '' ? [path.join(moduleDir, 'node_modules', pkg)] : []),
+                        path.join(monorepoRoot, 'node_modules', pkg),
+                        ...(modulePkgJson && modulePkgJson.trim() !== '' ? [path.join(path.dirname(modulePkgJson), 'node_modules', pkg)] : []),
+                        path.join(process.cwd(), 'node_modules', pkg)
+                    ];
+                    
+                    let hasNativeCode = false;
+                    for (const pkgPath of possiblePaths) {
+                        try {
+                            const androidJava = path.join(pkgPath, 'android', 'src', 'main', 'java');
+                            const androidKotlin = path.join(pkgPath, 'android', 'src', 'main', 'kotlin');
+                            const androidPaper = path.join(pkgPath, 'android', 'src', 'paper', 'java');
+                            const ios = path.join(pkgPath, 'ios');
+                            const apple = path.join(pkgPath, 'apple');
+                            
+                            if (fs.existsSync(androidJava) || 
+                                fs.existsSync(androidKotlin) || 
+                                fs.existsSync(androidPaper) ||
+                                fs.existsSync(ios) || 
+                                fs.existsSync(apple)) {
+                                hasNativeCode = true;
+                                break;
+                            }
+                        } catch (e) {
+                            // Continue checking other paths
+                        }
+                    }
+                    
+                    if (hasNativeCode) {
+                        nativeDeps.push(pkg);
+                    }
+                }
+            }
+            
+            console.log(nativeDeps.join(' '));
+        " 2>/dev/null)
+        
+        # Clean up temp file
+        rm -f "$temp_imports_file"
+    else
+        # Fallback: simple approach without node
+        warn "Node.js not available, using fallback detection"
+        detected_packages=$(echo "$imported_packages" | tr '\n' ' ')
+    fi
+    
+    echo "$detected_packages"
+}
+
+# Generic function to bundle native dependencies into module AAR
+# Usage: bundle_native_dependency <package_name> <framework_dir>
+# Note: We already know the package is a dependency (detected earlier), so we just need to find and copy it
+bundle_native_dependency() {
+    local package_name="$1"
+    local framework_dir="$2"
+    local sources_dir="${framework_dir}/src/main"
+    local java_dir="${sources_dir}/java"
+    
+    log "  Bundling $package_name native code..."
+    
+    # Find package in node_modules (check multiple locations)
+    # Priority: 1. Installed package's node_modules, 2. Temp npm env, 3. Monorepo node_modules
+    local package_source=""
+    if [ -d "${MODULE_DIR}/node_modules/${package_name}" ]; then
+        package_source="${MODULE_DIR}/node_modules/${package_name}"
+    elif [ -d "${TEMP_NPM_DIR}/node_modules/${package_name}" ]; then
+        package_source="${TEMP_NPM_DIR}/node_modules/${package_name}"
+    elif [ -d "${MONOREPO_ROOT}/node_modules/${package_name}" ]; then
+        package_source="${MONOREPO_ROOT}/node_modules/${package_name}"
+    else
+        warn "    $package_name not found in node_modules"
+        warn "    Searched: ${MODULE_DIR}/node_modules, ${TEMP_NPM_DIR}/node_modules, ${MONOREPO_ROOT}/node_modules"
+        return 1
+    fi
+    
+    log "    Found $package_name at: $package_source"
+    
+    # Verify that this package actually has native code
+    # Only bundle if android/ios/apple folders exist
+    local has_android=false
+    local has_ios=false
+    
+    if [ -d "${package_source}/android/src/main/java" ] || \
+       [ -d "${package_source}/android/src/main/kotlin" ] || \
+       [ -d "${package_source}/android/src/paper/java" ]; then
+        has_android=true
+    fi
+    
+    if [ -d "${package_source}/ios" ] || [ -d "${package_source}/apple" ]; then
+        has_ios=true
+    fi
+    
+    if [ "$has_android" = false ] && [ "$has_ios" = false ]; then
+        log "    ⚠️  $package_name has no native code (no android/ios folders) - skipping"
+        log "    ℹ️  This is a JS-only library, no bundling needed"
+        return 1
+    fi
+    
+    # Copy Android native code (if present)
+    local android_src="${package_source}/android/src/main/java"
+    local android_paper="${package_source}/android/src/paper/java"
+    local android_res="${package_source}/android/src/main/res"
+    local android_kotlin="${package_source}/android/src/main/kotlin"
+    
+    local bundled_anything=false
+    
+    # Copy main Java source
+    if [ -d "$android_src" ]; then
+        log "    Copying Android native code from: $android_src"
+        mkdir -p "$java_dir"
+        cp -R "$android_src"/* "$java_dir/" 2>/dev/null || true
+        # Fix BuildConfig references in Kotlin files (common issue when bundling)
+        # Some packages have .kt files in the java directory
+        find "$java_dir" -name "*.kt" -type f -exec perl -pi -e 's/\bBuildConfig\./com.facebook.react.BuildConfig./g' {} \; 2>/dev/null || true
+        # Fix IS_NEW_ARCHITECTURE_ENABLED - React Native BuildConfig doesn't have this field
+        # Use false as default (new architecture disabled when bundling native code)
+        find "$java_dir" -name "*.kt" -type f -exec perl -pi -e 's/com\.facebook\.react\.BuildConfig\.IS_NEW_ARCHITECTURE_ENABLED/false/g' {} \; 2>/dev/null || true
+        log "    ✅ Copied Android native code"
+        bundled_anything=true
+    fi
+    
+    # Copy Kotlin source (if any)
+    if [ -d "$android_kotlin" ]; then
+        log "    Copying Android Kotlin code..."
+        mkdir -p "$java_dir"
+        cp -R "$android_kotlin"/* "$java_dir/" 2>/dev/null || true
+        # Fix BuildConfig references in Kotlin files (common issue when bundling)
+        # Use perl for cross-platform compatibility (works on both macOS and Linux)
+        find "$java_dir" -name "*.kt" -type f -exec perl -pi -e 's/\bBuildConfig\./com.facebook.react.BuildConfig./g' {} \; 2>/dev/null || true
+        log "    ✅ Copied Android Kotlin code (fixed BuildConfig references)"
+        bundled_anything=true
+    fi
+    
+    # Copy Android paper source (codegen types)
+    if [ -d "$android_paper" ]; then
+        log "    Copying Android paper source (codegen types)..."
+        mkdir -p "$java_dir"
+        cp -R "$android_paper"/* "$java_dir/" 2>/dev/null || true
+        log "    ✅ Copied Android paper source"
+        bundled_anything=true
+    fi
+    
+    # Copy Android resources if any
+    if [ -d "$android_res" ]; then
+        local res_dir="${sources_dir}/res"
+        log "    Copying Android resources..."
+        mkdir -p "$res_dir"
+        cp -R "$android_res"/* "$res_dir/" 2>/dev/null || true
+        log "    ✅ Copied Android resources"
+        bundled_anything=true
+    fi
+    
+    if [ "$bundled_anything" = true ]; then
+        log "  ✅ $package_name native code bundled"
+        return 0
+    else
+        log "  ⚠️  $package_name has no Android native code to bundle"
+        return 1
+    fi
+}
+
+# Function to detect ReactPackage classes in bundled code
+# Returns list of fully qualified class names that implement ReactPackage
+detect_react_packages() {
+    local framework_dir="$1"
+    local java_dir="${framework_dir}/src/main/java"
+    local packages=""
+    
+    if [ ! -d "$java_dir" ]; then
+        return
+    fi
+    
+    # Find all *Package.java and *Package.kt files and extract their class names
+    # Look for files that contain "ReactPackage" or "BaseReactPackage"
+    while IFS= read -r package_file; do
+        if [ -f "$package_file" ]; then
+            # Extract package name from file path
+            # Example: java/com/horcrux/svg/SvgPackage.java -> com.horcrux.svg.SvgPackage
+            # Example: java/com/th3rdwave/safeareacontext/SafeAreaContextPackage.kt -> com.th3rdwave.safeareacontext.SafeAreaContextPackage
+            local relative_path="${package_file#$java_dir/}"
+            local class_name="${relative_path%.java}"
+            class_name="${class_name%.kt}"
+            class_name="${class_name//\//.}"
+            
+            # Verify it's actually a ReactPackage by checking the file content
+            # Check for Java: "implements ReactPackage" or "extends BaseReactPackage"
+            # Check for Kotlin: ": BaseReactPackage()" or ": ReactPackage"
+            if grep -qE "(implements|extends).*ReactPackage|: (BaseReactPackage|ReactPackage)" "$package_file" 2>/dev/null; then
+                packages="${packages}${class_name} "
+            fi
+        fi
+    done < <(find "$java_dir" -type f \( -name "*Package.java" -o -name "*Package.kt" \) 2>/dev/null)
+    
+    echo "$packages"
+}
 
 ########################################
 # Validate environment
@@ -401,10 +856,33 @@ fi
 BUNDLE_SIZE_HUMAN=$(du -h "$BUNDLE_FILE" | cut -f1)
 log "  ✅ Bundle created: $BUNDLE_FILE ($BUNDLE_SIZE_HUMAN)"
 
-# Cleanup temp npm environment if used
-if [ -d "$TEMP_NPM_DIR" ]; then
-  rm -rf "$TEMP_NPM_DIR"
+########################################
+# Step 1.5: Native Dependencies Detection (for vsco-native-kit)
+########################################
+log "Step 1.5: Detecting native dependencies..."
+
+# Detect native dependencies from the module installed from Verdaccio
+# This determines if we need to add vsco-native-kit dependency
+NATIVE_DEPS_DETECTED=""
+if [ -d "$MODULE_DIR" ] && [ -f "${MODULE_DIR}/package.json" ]; then
+    log "  Scanning module for native dependencies..."
+    # Pass TEMP_NPM_DIR so detection can scan transitive dependencies like @pkg/ui
+    NATIVE_DEPS_DETECTED=$(detect_native_dependencies "$MODULE_DIR" "${MODULE_DIR}/package.json" "$TEMP_NPM_DIR")
+    
+    if [ -n "$NATIVE_DEPS_DETECTED" ]; then
+        log "  ✅ Found native dependencies: $NATIVE_DEPS_DETECTED"
+        log "  ℹ️  These will be provided by vsco-native-kit AAR dependency"
+    else
+        log "  ℹ️  No native dependencies detected in this module"
+        log "  ℹ️  vsco-native-kit dependency will not be added"
+    fi
+else
+    warn "  Module directory or package.json not found - cannot detect native dependencies"
+    warn "  Will not add vsco-native-kit dependency"
 fi
+
+# No native bundling needed - vsco-native-kit provides all native dependencies (if any)
+export DETECTED_REACT_PACKAGES=""
 
 ########################################
 # Step 2: Create Android Library Structure
@@ -446,6 +924,15 @@ android {
         
         consumerProguardFiles "consumer-rules.pro"
     }
+    
+    lint {
+        // Don't fail build on lint errors in bundled native code
+        // Bundled code (e.g., react-native-svg) may have lint warnings/errors
+        abortOnError = false
+        checkReleaseBuilds = false
+        // Ignore lint errors in bundled native dependencies
+        disable.addAll(['WrongConstant', 'Deprecated'])
+    }
 
     buildTypes {
         release {
@@ -475,10 +962,43 @@ dependencies {
     
     // Kotlin standard library
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.0'
+$(if [ -n "$NATIVE_DEPS_DETECTED" ]; then
+    echo "    // Native dependencies are provided by vsco-native-kit"
+    echo "    // Detected native dependencies: $NATIVE_DEPS_DETECTED"
+    echo "    implementation 'com.vsco:vsco-native-kit:1.0.0'"
+else
+    echo "    // No native dependencies detected - vsco-native-kit not needed"
+fi)
 }
 
-// Publishing configuration will be added dynamically by publish-aar.sh when needed
+// Publishing configuration
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                groupId = "com.vscorp"
+                artifactId = "vsco-rn-module-${MODULE_NAME_LOWER}"
+                version = "1.0.0"
+                
+                // Publish AAR using Android component
+                // This automatically:
+                //   - Includes the AAR file
+                //   - Generates POM with all dependencies
+                //   - Makes transitive dependencies available to consuming apps
+                from components.release
+            }
+        }
+    }
+    
+    // Ensure publish task depends on assembleRelease
+    tasks.named("publishReleasePublicationToMavenLocal").configure {
+        dependsOn("assembleRelease")
+    }
+}
 EOF
+
+# Replace MODULE_NAME_LOWER placeholder in build.gradle
+perl -i -pe "s/\\\$\{MODULE_NAME_LOWER\}/${MODULE_NAME_LOWER}/g" "${FRAMEWORK_DIR}/build.gradle"
 
 log "  ✅ Created build.gradle"
 
@@ -498,12 +1018,13 @@ pluginManagement {
     }
 }
 
-dependencyResolutionManagement {
+        dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
         maven { url 'https://www.jitpack.io' }
+        mavenLocal()  // For vsco-native-kit AAR
         // React Native dependencies come from Maven Central (no local AARs needed)
         
         // Note: Artifactory repository is only needed for publishing, not dependency resolution
@@ -586,6 +1107,64 @@ log "  ✅ Created consumer-rules.pro"
 ########################################
 log "Step 3: Creating Kotlin wrapper class..."
 
+# Prepare ReactPackage list for Kotlin code generation
+# Native dependencies are now provided by vsco-native-kit
+# No need to generate ReactPackage list - VSCONativeKitPackage handles everything
+REACT_PACKAGES_LIST="            // Native dependencies provided by vsco-native-kit"
+
+# Build the native kit registration code conditionally
+NATIVE_KIT_REGISTRATION_CODE=""
+if [ -n "$NATIVE_DEPS_DETECTED" ]; then
+    NATIVE_KIT_REGISTRATION_CODE="        // Register vsco-native-kit package (provides all native dependencies)
+        // Detected native dependencies: $NATIVE_DEPS_DETECTED
+        try {
+            val nativeKitPackage = com.vsco.nativekit.VSCONativeKitPackage()
+            builder.addPackage(nativeKitPackage)
+            Log.d(TAG, \"   ✅ Registered VSCONativeKitPackage (provides all native dependencies)\")
+        } catch (e: ClassNotFoundException) {
+            Log.w(TAG, \"   ⚠️  VSCONativeKitPackage not found - ensure vsco-native-kit AAR is included as dependency\")
+            Log.w(TAG, \"   Native dependencies may not be available\")
+        } catch (e: Exception) {
+            Log.w(TAG, \"   ⚠️  Failed to register VSCONativeKitPackage: \${e.message}\")
+        }"
+else
+    NATIVE_KIT_REGISTRATION_CODE="        // No native dependencies detected - vsco-native-kit not needed"
+fi
+
+# Check if module has Expo dependencies (expo-* packages)
+# If it does, we need to register ModuleRegistryAdapter in the module framework's ReactInstanceManager
+HAS_EXPO_DEPS=false
+if echo "$NATIVE_DEPS_DETECTED" | grep -qE "expo-"; then
+    HAS_EXPO_DEPS=true
+fi
+
+# Generate Expo modules registration code if Expo dependencies are detected
+if [ "$HAS_EXPO_DEPS" = true ]; then
+    EXPO_MODULES_REGISTRATION_CODE="        // Register Expo modules bridge (required for expo-* modules)
+        // Detected Expo dependencies in module
+        try {
+            val expoModulesAdapter = expo.modules.adapters.react.ModuleRegistryAdapter(
+                expo.modules.ExpoModulesPackageList.getPackageList()
+            )
+            builder.addPackage(expoModulesAdapter)
+            Log.d(TAG, \"   ✅ Registered ModuleRegistryAdapter (Expo Modules bridge)\")
+        } catch (e: ClassNotFoundException) {
+            Log.w(TAG, \"   ⚠️  Expo modules classes not found - ensure expo-modules-core and vsco-native-kit are included\")
+            Log.w(TAG, \"   Expo modules may not be available: \${e.message}\")
+        } catch (e: Exception) {
+            Log.w(TAG, \"   ⚠️  Failed to register Expo modules: \${e.message}\")
+        }"
+else
+    EXPO_MODULES_REGISTRATION_CODE="        // No Expo dependencies detected - Expo modules registration not needed"
+fi
+
+# Generate Expo imports if needed
+EXPO_IMPORTS=""
+if [ "$HAS_EXPO_DEPS" = true ]; then
+    EXPO_IMPORTS="import expo.modules.ExpoModulesPackageList
+import expo.modules.adapters.react.ModuleRegistryAdapter"
+fi
+
 cat > "${JAVA_DIR}/${FRAMEWORK_NAME}.kt" <<'KOTLIN_EOF'
 package ${PACKAGE_NAME}
 
@@ -600,6 +1179,7 @@ import com.facebook.react.common.LifecycleState
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+${EXPO_IMPORTS_PLACEHOLDER}
 
 /**
  * ${FRAMEWORK_NAME}
@@ -818,11 +1398,11 @@ class ${FRAMEWORK_NAME} private constructor() {
             .setInitialLifecycleState(LifecycleState.BEFORE_CREATE)
         
         // Add core React Native package - required for ReactInstanceManager to work
-        // The JavaScript bundle contains all the JS code, but native modules need to be registered
         builder.addPackage(com.facebook.react.shell.MainReactPackage())
         
-        // Modules are self-contained - the bundle already contains all necessary JavaScript code
-        // If additional native modules are needed, they should be included in the module's own ReactPackage
+${NATIVE_KIT_REGISTRATION_CODE}
+
+${EXPO_MODULES_REGISTRATION_CODE}
         
         return builder.build()
     }
@@ -867,11 +1447,46 @@ class ${FRAMEWORK_NAME} private constructor() {
 }
 KOTLIN_EOF
 
-# Replace variables in the Kotlin file (since we used 'KOTLIN_EOF' to prevent variable expansion)
-sed -i '' "s/\${PACKAGE_NAME}/${PACKAGE_NAME}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
-sed -i '' "s/\${FRAMEWORK_NAME}/${FRAMEWORK_NAME}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
-sed -i '' "s/\${MODULE_COMPONENT}/${MODULE_COMPONENT}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
-sed -i '' "s/\${MODULE_NAME}/${MODULE_NAME}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+# Replace variables in the Kotlin file
+# Use perl for cross-platform compatibility (works on both macOS BSD sed and Linux GNU sed)
+# Replace all placeholders in a single pass for better reliability
+
+# REACT_PACKAGES_LIST is no longer used - we use NATIVE_KIT_REGISTRATION_CODE instead
+# This section is kept for backward compatibility but should not be needed
+
+# Replace NATIVE_KIT_REGISTRATION_CODE placeholder
+if [ -n "$NATIVE_KIT_REGISTRATION_CODE" ]; then
+  # Use perl to replace the placeholder (handles newlines correctly)
+  # The pattern in the file is ${NATIVE_KIT_REGISTRATION_CODE}
+  perl -i -pe "s|\\\$\{NATIVE_KIT_REGISTRATION_CODE\}|$NATIVE_KIT_REGISTRATION_CODE|g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+else
+  # Remove the placeholder line if no native dependencies detected
+  perl -i -pe "s/.*\\\$\{NATIVE_KIT_REGISTRATION_CODE\}.*//g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+fi
+
+# Replace EXPO_IMPORTS_PLACEHOLDER with actual imports if Expo dependencies are detected
+if [ "$HAS_EXPO_DEPS" = true ]; then
+  # Replace placeholder with actual Expo imports
+  perl -i -pe "s|\\\$\{EXPO_IMPORTS_PLACEHOLDER\}|import expo.modules.ExpoModulesPackageList\nimport expo.modules.adapters.react.ModuleRegistryAdapter|g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+else
+  # Remove the placeholder line if no Expo dependencies
+  perl -i -pe "s/.*\\\$\{EXPO_IMPORTS_PLACEHOLDER\}.*//g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+fi
+
+# Replace EXPO_MODULES_REGISTRATION_CODE placeholder
+if [ -n "$EXPO_MODULES_REGISTRATION_CODE" ]; then
+  perl -i -pe "s|\\\$\{EXPO_MODULES_REGISTRATION_CODE\}|$EXPO_MODULES_REGISTRATION_CODE|g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+else
+  perl -i -pe "s/.*\\\$\{EXPO_MODULES_REGISTRATION_CODE\}.*//g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+fi
+
+# Replace other placeholders
+# The pattern in the file is ${VAR} (no backslash since we're using single-quoted heredoc)
+# Use single quotes for perl to avoid bash expansion issues
+perl -i -pe "s/\\\$\{PACKAGE_NAME\}/${PACKAGE_NAME}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+perl -i -pe "s/\\\$\{FRAMEWORK_NAME\}/${FRAMEWORK_NAME}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+perl -i -pe "s/\\\$\{MODULE_COMPONENT\}/${MODULE_COMPONENT}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
+perl -i -pe "s/\\\$\{MODULE_NAME\}/${MODULE_NAME}/g" "${JAVA_DIR}/${FRAMEWORK_NAME}.kt"
 
 log "  ✅ Created Kotlin wrapper: ${FRAMEWORK_NAME}.kt"
 
@@ -898,11 +1513,11 @@ if [ ! -f "${FRAMEWORK_DIR}/gradlew" ]; then
   # Try to find Gradle wrapper from various sources
   GRADLEW_SOURCE=""
   
-  # 1. Try mkd-rn-host (preferred, same structure)
-  MKD_RN_HOST_GRADLEW="${FRAMEWORKS_ANDROID_DIR}/mkd-rn-host/gradlew"
-  if [ -f "$MKD_RN_HOST_GRADLEW" ]; then
-    GRADLEW_SOURCE="$MKD_RN_HOST_GRADLEW"
-    log "  Found Gradle wrapper in mkd-rn-host"
+  # 1. Try vsco-rn-host (preferred, same structure)
+  VSCO_RN_HOST_GRADLEW="${FRAMEWORKS_ANDROID_DIR}/vsco-rn-host/gradlew"
+  if [ -f "$VSCO_RN_HOST_GRADLEW" ]; then
+    GRADLEW_SOURCE="$VSCO_RN_HOST_GRADLEW"
+    log "  Found Gradle wrapper in vsco-rn-host"
   # 2. Try rn-runtime-source (if it exists)
   elif [ -f "${MONOREPO_ROOT}/rn-runtime-source/RnRuntimeSource/android/gradlew" ]; then
     GRADLEW_SOURCE="${MONOREPO_ROOT}/rn-runtime-source/RnRuntimeSource/android/gradlew"
@@ -1044,7 +1659,12 @@ if [ -f "$BUILD_AAR_FILE" ]; then
   AAR_SIZE=$(du -h "$BUILD_AAR_FILE" | cut -f1)
   log "  ✅ AAR created: $BUILD_AAR_FILE ($AAR_SIZE)"
   
-  # Copy to aars directory with new naming: mkd-rn-module-XXXX-release.aar
+  # Publish to Maven Local to generate POM file (needed for Maven Central publishing)
+  log "  Publishing to Maven Local to generate POM file..."
+  cd "$FRAMEWORK_DIR"
+  "${FRAMEWORK_DIR}/gradlew" publishReleasePublicationToMavenLocal > /dev/null 2>&1 || true
+  
+  # Copy to aars directory with new naming: vsco-rn-module-XXXX-release.aar
   cp "$BUILD_AAR_FILE" "${AARS_DIR}/${AAR_NAME}"
   log "  ✅ AAR copied to: ${AARS_DIR}/${AAR_NAME}"
   
@@ -1058,12 +1678,47 @@ if [ -f "$BUILD_AAR_FILE" ]; then
   mkdir -p "$CENTRAL_DIST_DIR"
   cp "$BUILD_AAR_FILE" "${CENTRAL_DIST_DIR}/${AAR_NAME}"
   log "  ✅ AAR copied to central distribution: ${CENTRAL_DIST_DIR}/${AAR_NAME}"
+  
+  # Copy POM file from local Maven repository (generated during publish)
+  # The POM is published to ~/.m2/repository/com/vscorp/vsco-rn-module-XXXX/1.0.0/
+  MAVEN_LOCAL_POM="${HOME}/.m2/repository/com/vscorp/vsco-rn-module-${MODULE_NAME_LOWER}/1.0.0/vsco-rn-module-${MODULE_NAME_LOWER}-1.0.0.pom"
+  if [ -f "$MAVEN_LOCAL_POM" ]; then
+    # Copy POM to build/outputs/aar folder (alongside the AAR)
+    AAR_OUTPUT_DIR="${FRAMEWORK_DIR}/build/outputs/aar"
+    mkdir -p "$AAR_OUTPUT_DIR"
+    cp "$MAVEN_LOCAL_POM" "$AAR_OUTPUT_DIR/${AAR_NAME%.aar}.pom"
+    log "  ✅ POM file copied to build/outputs/aar/${AAR_NAME%.aar}.pom"
+    
+    # Also copy to distribution directories
+    cp "$MAVEN_LOCAL_POM" "${AARS_DIR}/${AAR_NAME%.aar}.pom"
+    cp "$MAVEN_LOCAL_POM" "${DIST_DIR}/${AAR_NAME%.aar}.pom"
+    cp "$MAVEN_LOCAL_POM" "${CENTRAL_DIST_DIR}/${AAR_NAME%.aar}.pom"
+    log "  ✅ POM file copied to all distribution directories"
+  else
+    warn "POM file not found in Maven Local repository"
+    warn "  Expected: $MAVEN_LOCAL_POM"
+    warn "  POM file is required for Maven Central publishing"
+  fi
 else
   err "AAR file not found after build!"
   err "   Expected location: $BUILD_AAR_FILE"
   err "   Build may have failed. Check: ${BUILD_DIR}/gradle-build.log"
   exit 1
 fi
+
+########################################
+# Cleanup: Remove temporary directories
+########################################
+log "Cleaning up temporary directories..."
+
+# Cleanup temp npm environment if used
+if [ -d "$TEMP_NPM_DIR" ]; then
+  log "  Removing temporary npm environment: $TEMP_NPM_DIR"
+  rm -rf "$TEMP_NPM_DIR"
+  log "  ✅ Cleaned up temporary npm environment"
+fi
+
+# Note: BUILD_DIR is kept for debugging purposes, but can be cleaned with: ./gradlew clean
 
 ########################################
 # Step 5: Create README
@@ -1084,18 +1739,18 @@ This framework contains:
 
 ## Prerequisites
 
-- **mkd-rn-host SDK must be added to the consuming app first** (provides React Native runtime)
+- **vsco-rn-host SDK must be added to the consuming app first** (provides React Native runtime)
 - Android minSdkVersion: 23
 - Android targetSdkVersion: 34
 - Kotlin support
 
 ## Usage
 
-### 1. Add mkd-rn-host SDK First (Required)
+### 1. Add vsco-rn-host SDK First (Required)
 
-**Important:** The mkd-rn-host SDK must be added before this framework.
+**Important:** The vsco-rn-host SDK must be added before this framework.
 
-1. Publish mkd-rn-host to local Maven:
+1. Publish vsco-rn-host to local Maven:
    \`\`\`bash
    npm run framework:android:aar:host:publish:local
    \`\`\`
@@ -1103,7 +1758,7 @@ This framework contains:
 2. Add to your app's \`build.gradle\`:
    \`\`\`gradle
    dependencies {
-       implementation 'com.mkdcorp:mkd-rn-host-sdk:1.0.0'
+       implementation 'com.vscorp:vsco-rn-host-sdk:1.0.0'
    }
    \`\`\`
 
@@ -1121,7 +1776,7 @@ This framework contains:
    }
    \`\`\`
 
-**Note:** This framework automatically depends on React Native via mkd-rn-host SDK, which resolves dependencies from Maven Central.
+**Note:** This framework automatically depends on React Native via vsco-rn-host SDK, which resolves dependencies from Maven Central.
 
 ### 2. Add This AAR
 
@@ -1224,7 +1879,7 @@ echo "   • src/main/assets/module-${MODULE_NAME}.bundle ($BUNDLE_SIZE)"
 echo "   • README.md"
 echo ""
 echo "📝 Next steps:"
-echo "   1. Ensure mkd-rn-host SDK is added to your Android app first (see README)"
+echo "   1. Ensure vsco-rn-host SDK is added to your Android app first (see README)"
 echo "   2. Add this AAR to your app's dependencies:"
 echo "      implementation files('libs/${AAR_NAME}')"
 echo "   3. Use in code: import ${PACKAGE_NAME}.${FRAMEWORK_NAME}"

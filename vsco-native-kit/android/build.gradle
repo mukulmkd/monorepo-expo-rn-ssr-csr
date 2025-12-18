@@ -1,0 +1,95 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+    id 'maven-publish'
+}
+
+android {
+    namespace "com.vsco.nativekit"
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 24
+    }
+    
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = '11'
+        freeCompilerArgs += [
+            '-Xjvm-default=all',
+            '-Xopt-in=kotlin.RequiresOptIn',
+            '-Xopt-in=kotlin.Experimental'
+        ]
+    }
+    
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        disable 'WrongConstant', 'Deprecated'
+    }
+    
+    packagingOptions {
+        exclude '**/ReactStylesDiffMapHelperKt.class'
+        exclude '**/ReactStylesDiffMapHelperKt$*.class'
+        // Exclude Fresco classes that are bundled but should come from dependencies
+        exclude '**/com/facebook/fresco/**'
+        exclude '**/com/facebook/common/**'
+        exclude '**/com/facebook/datasource/**'
+        exclude '**/com/facebook/imagepipeline/**'
+        exclude '**/com/facebook/drawee/**'
+        exclude '**/com/facebook/proguard/**'
+    }
+}
+
+dependencies {
+    compileOnly 'com.facebook.react:react-android:0.81.5'
+    // Fresco is used by react-native-svg for image loading
+    // Using a more recent version that's compatible with React Native 0.81
+    compileOnly 'com.facebook.fresco:fresco:2.5.0'
+    compileOnly 'com.facebook.fresco:imagepipeline:2.5.0'
+    compileOnly 'com.facebook.fresco:imagepipeline-base:2.5.0'
+    api 'androidx.documentfile:documentfile:1.0.0'
+    
+    // Dependencies that should be provided by consuming apps to avoid duplicate class errors
+    // These are accessed via reflection or should be provided transitively by other AARs
+    api 'commons-codec:commons-codec:1.10'
+    api 'commons-io:commons-io:1.4'
+    api 'androidx.annotation:annotation:1.7.1'
+    api 'androidx.exifinterface:exifinterface:1.3.7'
+    api 'androidx.legacy:legacy-support-v4:1.0.0'
+    api 'com.drewnoakes:metadata-extractor:2.18.0'
+    api 'com.google.android.gms:play-services-mlkit-text-recognition:16.3.0'
+    // ZXing for barcode scanning (react-native-camera uses 3.3.3)
+    // Note: Using reflection to access ZXing classes, so compileOnly is sufficient
+    api 'com.google.zxing:core:3.3.3'
+    api 'com.squareup.okhttp3:okhttp-urlconnection:4.9.2'
+    api 'com.squareup.okhttp3:okhttp:4.9.2'
+    api 'com.squareup.okio:okio:2.9.0'
+    api 'host.exp.exponent:expo-modules-core:3.0.23'
+    api 'org.jetbrains.kotlin:kotlin-reflect:2.1.0'
+    compileOnly files('libs/expo-modules-core.aar')}
+
+afterEvaluate { project ->
+    project.publishing {
+        publications {
+            release(MavenPublication) {
+                groupId = 'com.vsco'
+                artifactId = 'vsco-native-kit'
+                version = '1.0.0'
+                from components.release
+            }
+        }
+    }
+    
+    project.tasks.named('publishReleasePublicationToMavenLocal').configure {
+        dependsOn 'assembleRelease'
+    }
+}

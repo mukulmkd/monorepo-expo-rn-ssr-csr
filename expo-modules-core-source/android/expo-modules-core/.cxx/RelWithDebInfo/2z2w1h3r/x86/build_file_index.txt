@@ -1,0 +1,5 @@
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/ReactAndroid/ReactAndroidConfig.cmake
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/ReactAndroid/ReactAndroidConfigVersion.cmake
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/fbjni/fbjniConfig.cmake
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/fbjni/fbjniConfigVersion.cmake
+/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/CMakeLists.txt

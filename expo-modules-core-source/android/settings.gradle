@@ -1,0 +1,21 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        mavenLocal()  // For expo-module-gradle-plugin
+    }
+}
+
+// React Native Gradle plugin is not available as standalone Maven artifact
+// We need to use composite build from node_modules if available, or the expo-module-gradle-plugin
+// will handle it via its own settings.gradle.kts
+// For standalone repo, React Native should be available via node (ExpoGradleHelperExtension uses node to resolve)
+
+rootProject.name = 'expo-modules-core'
+
+// Include expo-modules-core as a subproject
+include ':expo-modules-core'
+
+// Added by generate-native-kit-android.sh
+includeBuild("../expo-module-gradle-plugin")

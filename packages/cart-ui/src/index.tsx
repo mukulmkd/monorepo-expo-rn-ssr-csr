@@ -11,6 +11,7 @@ import {
 import { useSelector, useDispatch } from "react-redux";
 import { removeFromCart } from "@pkg/state";
 import type { AppState } from "@pkg/state";
+import { CartSVGThing } from "@pkg/ui";
 
 type CartScreenProps = {
   onProductPress?: (productId: string) => void;
@@ -45,6 +46,8 @@ export function CartScreen({ onProductPress }: CartScreenProps) {
         <Text style={{ fontSize: 16, color: "#666", textAlign: "center" }}>
           Add some products to get started!
         </Text>
+        {/* SVG Test Component - testing transitive dependency detection */}
+        <CartSVGThing />
       </View>
     );
   }
@@ -63,6 +66,8 @@ export function CartScreen({ onProductPress }: CartScreenProps) {
         <Text style={{ fontSize: 16, color: "#666", marginTop: 4 }}>
           {items.length} item{items.length !== 1 ? "s" : ""}
         </Text>
+        {/* SVG Test Component - testing transitive dependency detection */}
+        <CartSVGThing />
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
         {items.map((item) => {

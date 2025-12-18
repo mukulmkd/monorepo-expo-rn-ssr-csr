@@ -26,7 +26,7 @@ PODS_PROJECT="${RN_RUNTIME_SOURCE_DIR}/ios/Pods/Pods.xcodeproj"
 # Output directories - ensure frameworks/ios structure exists
 FRAMEWORKS_DIR="${MONOREPO_ROOT}/frameworks"
 FRAMEWORKS_IOS_DIR="${MONOREPO_ROOT}/frameworks/ios"
-PACKAGE_NAME="MKDReactNativeRuntime"
+PACKAGE_NAME="VSCOReactNativeRuntime"
 FRAMEWORK_ROOT="${FRAMEWORKS_IOS_DIR}/${PACKAGE_NAME}"
 RUNTIME_SRC="${FRAMEWORK_ROOT}/Sources/${PACKAGE_NAME}"
 BUILD_ROOT="${MONOREPO_ROOT}/build-rn-runtime"
@@ -1883,7 +1883,7 @@ EOF
 STATIC_LIBS_DIR="${DIST_DIR}/static-libs"
 STATIC_LIBS_DIR_DEVICE="${DIST_DIR}/static-libs-device"
 STATIC_LIBS_DIR_SIMULATOR="${DIST_DIR}/static-libs-simulator"
-  UNIFIED_XCFRAMEWORK="${FRAMEWORK_ROOT}/MKDReactNativeRuntime.xcframework"
+  UNIFIED_XCFRAMEWORK="${FRAMEWORK_ROOT}/VSCOReactNativeRuntime.xcframework"
 
 if [ -d "$STATIC_LIBS_DIR" ] && [ "$(ls -A "$STATIC_LIBS_DIR"/*.a 2>/dev/null)" ]; then
   LIB_COUNT=$(ls -1 "$STATIC_LIBS_DIR"/*.a 2>/dev/null | wc -l | tr -d ' ')
@@ -1917,7 +1917,7 @@ if [ -d "$STATIC_LIBS_DIR" ] && [ "$(ls -A "$STATIC_LIBS_DIR"/*.a 2>/dev/null)" 
   rm -rf "$TEMP_FRAMEWORK_DIR"
   mkdir -p "$TEMP_FRAMEWORK_DIR"
   
-  # Framework name - use MKDReactNativeRuntime for consistency with package name
+  # Framework name - use VSCOReactNativeRuntime for consistency with package name
   FRAMEWORK_NAME="${PACKAGE_NAME}"
   
   # Check if static libraries are fat binaries (universal)
@@ -2372,7 +2372,7 @@ EOF
       fi
       
       if [ -d "$UNIFIED_XCFRAMEWORK" ] && [ -f "${UNIFIED_XCFRAMEWORK}/Info.plist" ]; then
-        log "✅ Created unified MKDReactNativeRuntime.xcframework"
+        log "✅ Created unified VSCOReactNativeRuntime.xcframework"
       else
         log "⚠️  Warning: Failed to create unified xcframework, will use static libraries approach"
         rm -rf "$UNIFIED_XCFRAMEWORK"
@@ -2483,7 +2483,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "ReactNativeRuntimeBinary",
-            path: "MKDReactNativeRuntime.xcframework"
+            path: "VSCOReactNativeRuntime.xcframework"
         ),
 EOF
 
@@ -2505,7 +2505,7 @@ cat >> "${FRAMEWORK_ROOT}/Package.swift" <<EOF
             sources: ["${PACKAGE_NAME}.m"],
             publicHeadersPath: "Headers",
             linkerSettings: [
-                .linkedFramework("MKDReactNativeRuntime"),
+                .linkedFramework("VSCOReactNativeRuntime"),
                 .linkedFramework("hermes"),
                 .linkedLibrary("c++"),
                 .linkedLibrary("z"),
@@ -2530,7 +2530,7 @@ cat >> "${FRAMEWORK_ROOT}/Package.swift" <<EOF
             sources: ["React.m"],
             publicHeadersPath: "Headers",
             linkerSettings: [
-                .linkedFramework("MKDReactNativeRuntime"),
+                .linkedFramework("VSCOReactNativeRuntime"),
                 .linkedFramework("hermes"),
                 .linkedLibrary("c++"),
                 .linkedLibrary("z"),

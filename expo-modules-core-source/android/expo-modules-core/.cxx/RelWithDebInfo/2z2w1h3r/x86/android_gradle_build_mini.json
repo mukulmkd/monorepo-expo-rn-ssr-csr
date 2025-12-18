@@ -1,0 +1,35 @@
+{
+  "buildFiles": [
+    "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/ReactAndroid/ReactAndroidConfig.cmake",
+    "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/ReactAndroid/ReactAndroidConfigVersion.cmake",
+    "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/fbjni/fbjniConfig.cmake",
+    "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/prefab/x86/prefab/lib/i686-linux-android/cmake/fbjni/fbjniConfigVersion.cmake",
+    "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/mukulkishore/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/mukulkishore/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/.cxx/RelWithDebInfo/2z2w1h3r/x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "expo-modules-core::@6890427a1f51a3e7e1df": {
+      "artifactName": "expo-modules-core",
+      "abi": "x86",
+      "output": "/Users/mukulkishore/Desktop/Projects/monorepo-expo-rn-ssr-csr/expo-modules-core-source/android/expo-modules-core/build/intermediates/cxx/RelWithDebInfo/2z2w1h3r/obj/x86/libexpo-modules-core.so",
+      "runtimeFiles": [
+        "/Users/mukulkishore/.gradle/caches/8.14.3/transforms/9cc05dafd13eea6070ed9b7e94a27c3b/transformed/fbjni-0.7.0/prefab/modules/fbjni/libs/android.x86/libfbjni.so",
+        "/Users/mukulkishore/.gradle/caches/8.14.3/transforms/67391586347fa6dfb9609e3621e71d0f/transformed/react-android-0.81.5-release/prefab/modules/jsi/libs/android.x86/libjsi.so",
+        "/Users/mukulkishore/.gradle/caches/8.14.3/transforms/67391586347fa6dfb9609e3621e71d0f/transformed/react-android-0.81.5-release/prefab/modules/reactnative/libs/android.x86/libreactnative.so"
+      ]
+    }
+  }
+}

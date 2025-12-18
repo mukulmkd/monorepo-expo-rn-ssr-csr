@@ -1,9 +1,16 @@
 import * as React from "react";
 import { Provider } from "react-redux";
-import { View, Platform } from "react-native";
+import { View, Platform, StyleSheet } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { Header, Footer, Navigation } from "@pkg/ui";
 import { CartScreen } from "@pkg/cart-ui";
-import { configureStore, AppStore, loadPersistedState, setCartItems, setProductsItems } from "@pkg/state";
+import {
+  configureStore,
+  AppStore,
+  loadPersistedState,
+  setCartItems,
+  setProductsItems,
+} from "@pkg/state";
 import { NativeModules } from "react-native";
 
 type AppProps = {
@@ -54,10 +61,14 @@ export default function App({ store }: AppProps) {
         if (persistedState) {
           // Hydrate store by dispatching actions - this will trigger re-renders
           if (persistedState.cart && persistedState.cart.items) {
-            appStore.dispatch(setCartItems({ items: persistedState.cart.items }));
+            appStore.dispatch(
+              setCartItems({ items: persistedState.cart.items })
+            );
           }
           if (persistedState.products && persistedState.products.items) {
-            appStore.dispatch(setProductsItems({ items: persistedState.products.items }));
+            appStore.dispatch(
+              setProductsItems({ items: persistedState.products.items })
+            );
           }
         }
       })
@@ -83,14 +94,19 @@ export default function App({ store }: AppProps) {
   // Always render immediately - no loading state needed since store is created synchronously
   return (
     <Provider store={appStore}>
-      <View style={{ flex: 1 }}>
-        <Header />
-        <Navigation />
-        <View style={{ flex: 1 }}>
-          <CartScreen onProductPress={handleProductPress} />
-        </View>
-        <Footer />
-      </View>
+      <SafeAreaProvider>
+        <SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
+          <View style={{ flex: 1 }}>
+            <Header />
+            <Navigation />
+            <View style={{ flex: 1 }}>
+              {/* CartScreen now includes CartSVGThing internally - testing transitive dependency */}
+              <CartScreen onProductPress={handleProductPress} />
+            </View>
+            <Footer />
+          </View>
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Provider>
   );
 }

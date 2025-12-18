@@ -1,0 +1,86 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+    id 'maven-publish'
+}
+
+android {
+    namespace 'com.vscorp.products'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 23
+        targetSdk 34
+        versionName project.findProperty("publish_version") ?: "1.0.0"
+        
+        consumerProguardFiles "consumer-rules.pro"
+    }
+    
+    lint {
+        // Don't fail build on lint errors in bundled native code
+        // Bundled code (e.g., react-native-svg) may have lint warnings/errors
+        abortOnError = false
+        checkReleaseBuilds = false
+        // Ignore lint errors in bundled native dependencies
+        disable.addAll(['WrongConstant', 'Deprecated'])
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+// Note: Repositories are defined in settings.gradle
+// (repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS) requires this)
+
+dependencies {
+    // React Native dependencies - using standard Maven dependencies
+    // Consumers must add React Native to their app's dependencies
+    compileOnly 'com.facebook.react:react-android:0.81.5'
+    compileOnly 'com.facebook.react:hermes-android:0.81.5'
+    
+    // Kotlin standard library
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.0'
+    // Native dependencies are provided by vsco-native-kit
+    // Detected native dependencies: expo-file-system react-native-svg
+    implementation 'com.vsco:vsco-native-kit:1.0.0'
+}
+
+// Publishing configuration
+
+
+// Publishing configuration (added by publish-aar.sh)
+afterEvaluate { project ->
+    def publishVersion = project.findProperty("publish_version") ?: "1.0.0"
+    
+    project.publishing {
+        publications {
+            release(MavenPublication) {
+                groupId = "com.vscorp"
+                artifactId = "vsco-rn-module-products"
+                version = publishVersion
+                from components.release
+            }
+        }
+        
+        repositories {
+            mavenLocal()
+        }
+    }
+    
+    project.tasks.named("publishReleasePublicationToMavenLocal").configure {
+        dependsOn("assembleRelease")
+    }
+}

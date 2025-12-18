@@ -70,7 +70,7 @@ log "  REGISTRY_VERSION=$REGISTRY_VERSION"
 # MODULE_COMPONENT is already set in the case statement above (e.g., "ModuleProducts", "ModuleCart", "ModulePDP")
 # Convert module name to proper case for SPM naming
 MODULE_NAME_UPPER=$(echo "$MODULE_NAME" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')
-PACKAGE_NAME="MKDRNModule${MODULE_NAME_UPPER}SPM"  # MKDRNModuleProductsSPM, MKDRNModuleCartSPM, etc.
+PACKAGE_NAME="VSCORNModule${MODULE_NAME_UPPER}SPM"  # VSCORNModuleProductsSPM, VSCORNModuleCartSPM, etc.
 FRAMEWORK_NAME="${MODULE_COMPONENT}Framework"  # ModuleProductsFramework, ModuleCartFramework, etc. (for Swift class names)
 FRAMEWORK_DIR="${MONOREPO_ROOT}/frameworks/ios/${PACKAGE_NAME}"
 BUILD_DIR="${FRAMEWORK_DIR}/build"
@@ -215,6 +215,333 @@ else
     err "  2. Or module exists in monorepo: apps/module-${MODULE_NAME}/"
     exit 1
   fi
+fi
+
+########################################
+# Native Dependency Detection (for vsco-native-kit)
+########################################
+log "Step 1.5: Detecting native dependencies..."
+
+# Function to detect native dependencies (enhanced version with transitive dependency support)
+# This is the same enhanced logic from generate-module-framework-aar.sh
+detect_native_dependencies() {
+    local module_dir="$1"
+    local module_package_json="$2"
+    local root_package_json="${MONOREPO_ROOT}/package.json"
+    local temp_npm_dir="${3:-}"  # Optional third parameter for TEMP_NPM_DIR
+    local detected_packages=""
+    
+    if [ ! -d "$module_dir" ]; then
+        warn "Module directory not found: $module_dir"
+        return
+    fi
+    
+    # Scan source files for react-native-* and expo-* imports
+    # Pattern matches: import ... from "react-native-xxx" or import ... from "expo-xxx"
+    # Also scan transitive dependencies (like @pkg/ui) that may use native libraries
+    local source_files=$(find "$module_dir" -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.js" -o -name "*.jsx" \) 2>/dev/null)
+    
+    # Also scan source files from dependencies (transitive dependencies like @pkg/ui)
+    # Check node_modules for @pkg/* packages and scan their source files too
+    # This handles cases where react-native-svg is used in @pkg/ui but module-cart depends on @pkg/ui
+    local dependency_source_files=""
+    
+    # Check multiple possible locations for node_modules
+    # Priority: 1. TEMP_NPM_DIR (where module is installed from Verdaccio), 2. module_dir/node_modules, 3. monorepo node_modules
+    local possible_node_modules=()
+    if [ -n "$temp_npm_dir" ] && [ -d "$temp_npm_dir" ]; then
+        possible_node_modules+=("${temp_npm_dir}/node_modules")
+    fi
+    if [ -d "${module_dir}/node_modules" ]; then
+        possible_node_modules+=("${module_dir}/node_modules")
+    fi
+    if [ -d "${MONOREPO_ROOT}/node_modules" ]; then
+        possible_node_modules+=("${MONOREPO_ROOT}/node_modules")
+    fi
+    
+    # Recursive function to scan @pkg/* dependencies
+    # This handles nested dependencies: module-cart -> @pkg/cart-ui -> @pkg/ui -> react-native-svg
+    scan_pkg_dependencies() {
+        local pkg_dir="$1"
+        local scanned_pkgs="$2"  # Track already scanned packages to avoid infinite loops
+        local node_modules_dir="$3"
+        
+        if [ ! -d "$pkg_dir" ] || [ ! -d "${pkg_dir}/src" ]; then
+            return
+        fi
+        
+        local pkg_name=$(basename "$pkg_dir")
+        
+        # Avoid infinite loops - skip if already scanned
+        if echo "$scanned_pkgs" | grep -q "^${pkg_name}$"; then
+            return
+        fi
+        scanned_pkgs="${scanned_pkgs}${pkg_name}"$'\n'
+        
+        # Scan this package's source files for @pkg/* imports
+        local pkg_source_files=$(find "$pkg_dir/src" -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.js" -o -name "*.jsx" \) 2>/dev/null)
+        
+        if [ -n "$pkg_source_files" ]; then
+            # Add this package's source files to dependency_source_files
+            dependency_source_files="${dependency_source_files}${pkg_source_files}"$'\n'
+            
+            # Check if this package imports other @pkg/* packages (nested dependencies)
+            local nested_pkg_imports=$(echo "$pkg_source_files" | tr '\n' '\0' | xargs -0 grep -hE "from ['\"]@pkg/" 2>/dev/null | \
+                grep -oE "@pkg/[a-zA-Z0-9_-]+" | \
+                sed 's/@pkg\///' | \
+                sort -u | \
+                tr '\n' ' ' | \
+                xargs)
+            
+            # Recursively scan nested @pkg/* dependencies
+            if [ -n "$nested_pkg_imports" ]; then
+                for nested_pkg in $nested_pkg_imports; do
+                    local nested_pkg_dir="${node_modules_dir}/@pkg/${nested_pkg}"
+                    if [ -d "$nested_pkg_dir" ]; then
+                        scan_pkg_dependencies "$nested_pkg_dir" "$scanned_pkgs" "$node_modules_dir"
+                    fi
+                done
+            fi
+        fi
+    }
+    
+    for node_modules_dir in "${possible_node_modules[@]}"; do
+        if [ -d "${node_modules_dir}/@pkg" ]; then
+            for pkg_dir in "${node_modules_dir}/@pkg"/*; do
+                if [ -d "$pkg_dir" ] && [ -d "${pkg_dir}/src" ]; then
+                    local pkg_name=$(basename "$pkg_dir")
+                    
+                    # Check if this @pkg/* package is imported by the module
+                    # This works with Verdaccio-installed modules because we scan the module's source files
+                    if [ -n "$source_files" ] && echo "$source_files" | tr '\n' '\0' | xargs -0 grep -q "from ['\"]@pkg/${pkg_name}"; then
+                        # Extract component names that are actually imported from this package
+                        # Pattern: import { Component1, Component2 } from "@pkg/ui"
+                        local imported_from_this_pkg=$(echo "$source_files" | tr '\n' '\0' | xargs -0 grep -hE "from ['\"]@pkg/${pkg_name}" 2>/dev/null | \
+                            grep -oE "\{[^}]*\}" | \
+                            sed 's/[{}]//g' | \
+                            tr ',' '\n' | \
+                            sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
+                            grep -v "^$" | \
+                            sort -u | \
+                            tr '\n' ' ' | \
+                            xargs)
+                        
+                        if [ -n "$imported_from_this_pkg" ]; then
+                            # Only scan source files for components that are actually imported
+                            for component in $imported_from_this_pkg; do
+                                # Look for component file in primitives/ or directly in src/
+                                # This works with Verdaccio because source files are included in the published package
+                                local component_file=$(find "$pkg_dir/src" -type f \( \
+                                    -path "*/primitives/${component}.tsx" -o \
+                                    -path "*/primitives/${component}.ts" -o \
+                                    -path "*/${component}.tsx" -o \
+                                    -path "*/${component}.ts" -o \
+                                    -path "*/${component}.jsx" -o \
+                                    -path "*/${component}.js" \
+                                \) 2>/dev/null | head -1)
+                                
+                                if [ -n "$component_file" ] && [ -f "$component_file" ]; then
+                                    dependency_source_files="${dependency_source_files}${component_file}"$'\n'
+                                fi
+                            done
+                            
+                            # Recursively scan nested @pkg/* dependencies (e.g., @pkg/cart-ui -> @pkg/ui)
+                            scan_pkg_dependencies "$pkg_dir" "" "$node_modules_dir"
+                        else
+                            # If we can't determine specific components (e.g., import * from "@pkg/ui")
+                            # Scan all source files as fallback (conservative approach)
+                            local pkg_sources=$(find "$pkg_dir" -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.js" -o -name "*.jsx" \) 2>/dev/null)
+                            if [ -n "$pkg_sources" ]; then
+                                dependency_source_files="${dependency_source_files}${pkg_sources}"$'\n'
+                            fi
+                            
+                            # Recursively scan nested @pkg/* dependencies
+                            scan_pkg_dependencies "$pkg_dir" "" "$node_modules_dir"
+                        fi
+                    fi
+                fi
+            done
+        fi
+    done
+    
+    # Combine module source files and dependency source files
+    # Ensure proper newline separation between the two sets of files
+    local all_source_files=""
+    if [ -n "$source_files" ]; then
+        all_source_files="$source_files"
+    fi
+    if [ -n "$dependency_source_files" ]; then
+        if [ -n "$all_source_files" ]; then
+            all_source_files="${all_source_files}"$'\n'"${dependency_source_files}"
+        else
+            all_source_files="$dependency_source_files"
+        fi
+    fi
+    
+    if [ -z "$all_source_files" ]; then
+        # Don't warn - this is expected if scanning installed module from Verdaccio
+        echo ""
+        return
+    fi
+    
+    # Extract package names from imports
+    # Matches: from "react-native-xxx" or from 'react-native-xxx' or require("react-native-xxx")
+    # Use a simpler approach: process all files at once with xargs
+    local imported_packages=""
+    if [ -n "$all_source_files" ]; then
+        # Use xargs with -0 for null-separated input (more reliable)
+        imported_packages=$(echo "$all_source_files" | tr '\n' '\0' | xargs -0 grep -hE "from ['\"](react-native-|expo-)" 2>/dev/null | \
+            grep -oE "(react-native-|expo-)[a-zA-Z0-9_-]+" | \
+            sort -u | \
+            grep -v "^react-native$" | \
+            tr '\n' ' ' | \
+            xargs)
+    fi
+    
+    if [ -z "$imported_packages" ]; then
+        echo ""
+        return
+    fi
+    
+    # For each imported package, check if it exists in package.json and has native code
+    if command -v node &> /dev/null; then
+        # Use a more robust approach: write imported packages to a temp file to avoid shell escaping issues
+        local temp_imports_file=$(mktemp)
+        echo "$imported_packages" > "$temp_imports_file"
+        
+        detected_packages=$(node -e "
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Read imported packages from temp file to avoid shell escaping issues
+            const importedPkgsStr = fs.readFileSync('$temp_imports_file', 'utf8').trim();
+            const importedPkgs = importedPkgsStr ? importedPkgsStr.split(/\\s+/).filter(p => p && p.trim()) : [];
+            
+            const modulePkgJson = '$module_package_json';
+            const rootPkgJson = '$root_package_json';
+            const monorepoRoot = process.env.MONOREPO_ROOT || '${MONOREPO_ROOT}';
+            const moduleDir = '$module_dir';
+            
+            const nativeDeps = [];
+            
+            for (const pkg of importedPkgs) {
+                // Skip if not a native package pattern
+                if (!pkg.startsWith('react-native-') && !pkg.startsWith('expo-')) {
+                    continue;
+                }
+                if (pkg === 'react-native') {
+                    continue;
+                }
+                
+                // Check module package.json first (if provided)
+                let pkgVersion = null;
+                let foundInModule = false;
+                
+                if (modulePkgJson && modulePkgJson.trim() !== '' && fs.existsSync(modulePkgJson)) {
+                    try {
+                        const modulePkg = JSON.parse(fs.readFileSync(modulePkgJson, 'utf8'));
+                        const allDeps = {
+                            ...(modulePkg.dependencies || {}),
+                            ...(modulePkg.peerDependencies || {}),
+                            ...(modulePkg.devDependencies || {})
+                        };
+                        if (allDeps[pkg]) {
+                            pkgVersion = allDeps[pkg];
+                            foundInModule = true;
+                        }
+                    } catch (e) {
+                        // Continue to root check
+                    }
+                }
+                
+                // Fallback to root package.json
+                if (!pkgVersion && fs.existsSync(rootPkgJson)) {
+                    try {
+                        const rootPkg = JSON.parse(fs.readFileSync(rootPkgJson, 'utf8'));
+                        const allDeps = {
+                            ...(rootPkg.dependencies || {}),
+                            ...(rootPkg.peerDependencies || {}),
+                            ...(rootPkg.devDependencies || {})
+                        };
+                        if (allDeps[pkg]) {
+                            pkgVersion = allDeps[pkg];
+                        }
+                    } catch (e) {
+                        // Continue
+                    }
+                }
+                
+                // If package found in either package.json, check for native code
+                if (pkgVersion) {
+                    // Check multiple possible locations for native code
+                    // Priority: 1. Installed package's node_modules, 2. Monorepo node_modules, 3. Current dir node_modules
+                    const possiblePaths = [
+                        ...(moduleDir && moduleDir.trim() !== '' ? [path.join(moduleDir, 'node_modules', pkg)] : []),
+                        path.join(monorepoRoot, 'node_modules', pkg),
+                        ...(modulePkgJson && modulePkgJson.trim() !== '' ? [path.join(path.dirname(modulePkgJson), 'node_modules', pkg)] : []),
+                        path.join(process.cwd(), 'node_modules', pkg)
+                    ];
+                    
+                    let hasNativeCode = false;
+                    for (const pkgPath of possiblePaths) {
+                        try {
+                            const androidJava = path.join(pkgPath, 'android', 'src', 'main', 'java');
+                            const androidKotlin = path.join(pkgPath, 'android', 'src', 'main', 'kotlin');
+                            const androidPaper = path.join(pkgPath, 'android', 'src', 'paper', 'java');
+                            const ios = path.join(pkgPath, 'ios');
+                            const apple = path.join(pkgPath, 'apple');
+                            
+                            if (fs.existsSync(androidJava) || 
+                                fs.existsSync(androidKotlin) || 
+                                fs.existsSync(androidPaper) ||
+                                fs.existsSync(ios) || 
+                                fs.existsSync(apple)) {
+                                hasNativeCode = true;
+                                break;
+                            }
+                        } catch (e) {
+                            // Continue checking other paths
+                        }
+                    }
+                    
+                    if (hasNativeCode) {
+                        nativeDeps.push(pkg);
+                    }
+                }
+            }
+            
+            console.log(nativeDeps.join(' '));
+        " 2>/dev/null)
+        
+        # Clean up temp file
+        rm -f "$temp_imports_file"
+    else
+        # Fallback: simple approach without node
+        warn "Node.js not available, using fallback detection"
+        detected_packages=$(echo "$imported_packages" | tr '\n' ' ')
+    fi
+    
+    echo "$detected_packages"
+}
+
+# Detect native dependencies from the module installed from Verdaccio
+# This determines if we need to add vsco-native-kit dependency
+NATIVE_DEPS_DETECTED=""
+if [ -d "$MODULE_DIR" ] && [ -f "${MODULE_DIR}/package.json" ]; then
+    log "  Scanning module for native dependencies..."
+    # Pass TEMP_NPM_DIR so detection can scan transitive dependencies like @pkg/ui
+    NATIVE_DEPS_DETECTED=$(detect_native_dependencies "$MODULE_DIR" "${MODULE_DIR}/package.json" "$TEMP_NPM_DIR")
+    
+    if [ -n "$NATIVE_DEPS_DETECTED" ]; then
+        log "  ✅ Found native dependencies: $NATIVE_DEPS_DETECTED"
+        log "  ℹ️  These will be provided by VSCONativeKit SPM dependency"
+    else
+        log "  ℹ️  No native dependencies detected in this module"
+        log "  ℹ️  VSCONativeKit dependency will not be added"
+    fi
+else
+    warn "  Module directory or package.json not found - cannot detect native dependencies"
+    warn "  Will not add VSCONativeKit dependency"
 fi
 
 # Ensure Resources directory exists
@@ -395,10 +722,9 @@ mkdir -p "${SOURCES_DIR}/include"
 
 # Create Swift wrapper
 cat > "${SOURCES_DIR}/${FRAMEWORK_NAME}.swift" <<EOF
+import Foundation
 import UIKit
 import React
-// React Native types are provided by MKDReactNativeRuntime SPM package
-// The consuming app must add MKDReactNativeRuntime as a dependency
 
 public class ${FRAMEWORK_NAME} {
     public static let shared = ${FRAMEWORK_NAME}()
@@ -490,7 +816,7 @@ public class ${FRAMEWORK_NAME} {
     ///   - moduleName: The registered module name (default: "${MODULE_COMPONENT}")
     ///   - initialProperties: Optional initial props
     /// - Returns: A configured RCTRootView ready to be added to a view hierarchy
-    /// - Note: Requires MKDReactNativeRuntime SPM package to be added to the consuming app
+    /// - Note: Requires VSCOReactNativeRuntime SPM package to be added to the consuming app
     public func createView(
         moduleName: String = "${MODULE_COMPONENT}",
         initialProperties: [String: Any]? = nil
@@ -587,15 +913,29 @@ let package = Package(
     dependencies: [
         // React Native Runtime - required dependency
         // Path is relative to this package's location
-                .package(path: "../MKDReactNativeRuntime")
+        .package(path: "../VSCOReactNativeRuntime")$(if [ -n "$NATIVE_DEPS_DETECTED" ]; then
+    echo ","
+    echo "        // Native dependencies (react-native-svg, react-native-safe-area-context, etc.)"
+    echo "        // Detected native dependencies: $NATIVE_DEPS_DETECTED"
+    echo "        // Path is relative to this package's location"
+    echo "        // Note: Package.swift is located at vsco-native-kit/ios/VSCONativeKit/Package.swift"
+    echo "        // Path is relative to this package's location (frameworks/ios/${PACKAGE_NAME}/)"
+    echo "        .package(path: \"../../../vsco-native-kit/ios/VSCONativeKit\")"
+fi)
     ],
     targets: [
         .target(
             name: "${PACKAGE_NAME}",
             dependencies: [
-                // React Native types from MKDReactNativeRuntime
-                .product(name: "MKDReactNativeRuntime", package: "MKDReactNativeRuntime"),
-                .product(name: "React", package: "MKDReactNativeRuntime")
+                // React Native types from VSCOReactNativeRuntime
+                .product(name: "VSCOReactNativeRuntime", package: "VSCOReactNativeRuntime"),
+                .product(name: "React", package: "VSCOReactNativeRuntime")$(if [ -n "$NATIVE_DEPS_DETECTED" ]; then
+    echo ","
+    echo "                // Native dependencies from VSCONativeKit"
+    echo "                // Detected native dependencies: $NATIVE_DEPS_DETECTED"
+    echo "                // Note: Package name is \"VSCONativeKit\" as defined in its Package.swift"
+    echo "                .product(name: \"VSCONativeKit\", package: \"VSCONativeKit\")"
+fi)
             ],
             path: "Sources/${PACKAGE_NAME}",
             resources: [
@@ -626,7 +966,7 @@ This framework contains:
 
 ## Prerequisites
 
-- MKDReactNativeRuntime SPM package must be added to the consuming app first
+- VSCOReactNativeRuntime SPM package must be added to the consuming app first
 - iOS 14.0+
 - Xcode 14+
 
@@ -648,13 +988,13 @@ In Xcode:
 2. Navigate to: \`frameworks/ios/${PACKAGE_NAME}\`
 3. Add to target
 
-**Note:** This framework automatically depends on MKDReactNativeRuntime, so Xcode will resolve it automatically if MKDReactNativeRuntime is already added.
+**Note:** This framework automatically depends on VSCOReactNativeRuntime, so Xcode will resolve it automatically if VSCOReactNativeRuntime is already added.
 
 ### 3. Use in Code
 
 \`\`\`swift
 import ${PACKAGE_NAME}
-// React types are automatically available via MKDReactNativeRuntime dependency
+// React types are automatically available via VSCOReactNativeRuntime dependency
 
 // Option 1: Use convenience method (recommended)
 if let rootView = ${FRAMEWORK_NAME}.shared.createView() {
@@ -705,11 +1045,11 @@ echo "   • Resources/module-${MODULE_NAME}.bundle ($BUNDLE_SIZE)"
 echo "   • README.md"
 echo ""
 echo "📝 Next steps:"
-echo "   1. Ensure MKDReactNativeRuntime SPM is generated first:"
+echo "   1. Ensure VSCOReactNativeRuntime SPM is generated first:"
 echo "      npm run framework:ios:spm:runtime"
-echo "   2. Add MKDReactNativeRuntime to Xcode first:"
+echo "   2. Add VSCOReactNativeRuntime to Xcode first:"
 echo "      File → Add Package Dependencies → Add Local..."
-echo "      Navigate to: frameworks/ios/MKDReactNativeRuntime"
+echo "      Navigate to: frameworks/ios/VSCOReactNativeRuntime"
 echo "   3. Add this framework to Xcode:"
 echo "      File → Add Package Dependencies → Add Local..."
 echo "      Navigate to: $FRAMEWORK_DIR"

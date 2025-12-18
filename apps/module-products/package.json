@@ -1,6 +1,6 @@
 {
   "name": "@app/module-products",
-  "version": "0.1.8",
+  "version": "0.1.15",
   "private": false,
   "main": "index.js",
   "scripts": {
@@ -14,7 +14,8 @@
     "@pkg/core": "^0.1.0",
     "@pkg/products-ui": "^0.1.0",
     "@pkg/state": "^0.1.0",
-    "@pkg/ui": "^0.1.0"
+    "@pkg/ui": "^0.1.0",
+    "expo-file-system": "~18.0.4"
   },
   "peerDependencies": {
     "expo": ">=54.0.0",
